@@ -3,7 +3,7 @@
 
 #include "game.h"
 
-// ------------------------------------------------------------------ level data
+// ------------------------------------------------------------------ track data
 
 static const float DECK_H = 10, JUMP_H = 7, RAMP_LEN = 15;
 
@@ -52,10 +52,14 @@ static void markSolid(int x, int y, int w, int h, uint8_t s, float cast) {
 static void markObj(int x, int y, int w, int h) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) objMask[j * W + i] = 1; }
 static void markReserved(int x, int y, int w, int h) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) reserved[j * W + i] = 1; }
 // Draws a small picture given as rows of characters; keys[i] is drawn in cols[i], '.' is transparent.
-static void sprite(int x, int y, const char* const* rows, int h, const char* keys, const uint32_t* cols) {
+// With tall >= 0 the picture is drawn above the cars instead (they can drive behind it); a tall above 0
+// also makes every pixel of it cast a shadow of that height (0: the shadow comes from its solid foot only).
+static void sprite(int x, int y, const char* const* rows, int h, const char* keys, const uint32_t* cols, float tall = -1) {
     for (int j = 0; j < h; j++) for (int i = 0; rows[j][i]; i++) {
         const char* k = strchr(keys, rows[j][i]);
-        if (rows[j][i] != '.' && k) gpx(x + i, y + j, cols[k - keys]);
+        if (rows[j][i] == '.' || !k) continue;
+        if (tall < 0) gpx(x + i, y + j, cols[k - keys]);
+        else { opx(x + i, y + j, cols[k - keys], 99); if (inb(x + i, y + j)) castH[(y + j) * W + x + i] = std::max(castH[(y + j) * W + x + i], tall); }
     }
 }
 
@@ -525,12 +529,16 @@ static bool addScenery(int x, int y, Rng& rng) {
     case TH_MEXICO:
         if (k < 7 && placeFree(x + 3, y + 5, 4, 6)) {        // saguaro
             static const char* s[10] = { "...l...", "..llg..", "..llg.l", "l.llg.g", "l.llglg", "llllgg.", ".gllg..", "..llg..", "..llg..", "..llg.." }; static const uint32_t c[2] = { RGB(60, 204, 84), RGB(28, 140, 60) };
-            sprite(x, y, s, 10, "lg", c); if (k == 0) gpx(x + 3, y - 1, RGB(255, 90, 200));
-            markSolid(x + 2, y + 8, 3, 2, 2, 8); markObj(x, y, 7, 10); markReserved(x - 2, y - 2, 11, 14); return true;
+            // the top and the arms stand above the cars (a car can drive behind them); the foot is solid
+            sprite(x, y, s, 7, "lg", c, 0); sprite(x, y + 7, s + 7, 3, "lg", c);
+            if (k == 0) opx(x + 3, y - 1, RGB(255, 90, 200), 99);
+            markSolid(x + 2, y + 7, 3, 1, 2, 0); markSolid(x + 2, y + 8, 3, 2, 2, 8);       // the shadow falls from the foot
+            markReserved(x - 2, y - 2, 11, 14); return true;
         }
         if (k < 10 && placeFree(x + 2, y + 2, 3)) {          // barrel cactus
             static const char* s[5] = { ".ff.", "lggd", "lggd", "lggd", ".dd." }; static const uint32_t c[4] = { RGB(255, 90, 200), RGB(110, 220, 110), RGB(40, 164, 70), RGB(20, 104, 50) };
-            sprite(x, y, s, 5, "flgd", c); markSolid(x, y + 1, 4, 4, 1, 3); markReserved(x - 2, y - 2, 8, 9); return true;
+            sprite(x, y, s, 2, "flgd", c, 0); sprite(x, y + 2, s + 2, 3, "flgd", c);      // top above the cars, front solid
+            markSolid(x, y + 2, 4, 3, 1, 3); markReserved(x - 2, y - 2, 8, 9); return true;
         }
         if (k < 13 && placeFree(x + 4, y + 3, 6, 5)) {       // boulder
             static const char* b[6] = { "..wwww...", ".wlllllg.", "wllllllgd", "lllllggdd", "llgggggdd", ".gggddd.." }; static const uint32_t c[4] = { RGB(244, 226, 200), RGB(204, 156, 108), RGB(164, 114, 74), RGB(106, 66, 42) };

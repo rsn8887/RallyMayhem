@@ -41,6 +41,8 @@ static int selfTest(const char* shotDir) {
         snprintf(path, sizeof(path), "%s/start.bmp", shotDir); saveBMP(path);
         finishRace(); for (int f = 0; f < 30; f++) frame(1.0f / 60);
         snprintf(path, sizeof(path), "%s/results.bmp", shotDir); saveBMP(path);
+        state = ST_FINAL; for (int f = 0; f < 40; f++) frame(1.0f / 60);
+        snprintf(path, sizeof(path), "%s/final.bmp", shotDir); saveBMP(path);
     }
     return bad;
 }

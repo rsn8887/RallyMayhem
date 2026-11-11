@@ -41,7 +41,7 @@ if(PLATFORM_UC STREQUAL "VITA" AND NOT CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake" CACHE FILEPATH "VitaSDK toolchain")
 endif()
 
-project(RallyMayhem VERSION 1.0.0 LANGUAGES C CXX)
+project(RallyMayhem VERSION 1.1.0 LANGUAGES C CXX)
 
 # Out-of-project builds only: build folders sit next to the project folder, never inside it.
 get_filename_component(_src "${CMAKE_SOURCE_DIR}" REALPATH)

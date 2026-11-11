@@ -59,8 +59,11 @@ static bool anyEdgeBrake() { for (int i = 0; i < NDEV; i++) if (devs[i].present 
 static bool anyEdgeBack() { for (int i = 0; i < NDEV; i++) if (devs[i].present && EDGE(i, back)) return true; return false; }
 
 // ------------------------------------------------------------------ game flow
-enum { ST_TITLE, ST_RACE, ST_RESULTS, ST_FINAL };
-int state = ST_TITLE, menuSel = 0, optTrack = 0, optLaps = 5, curTrack = 0;
+int state = ST_TITLE, menuSel = 0, optSet = 0, optLaps = 5, curTrack = 0;
+// Tracks are played in sets of five; the last choice ("complete") plays all of them in sequence.
+static int numSets() { return (int)TRACKS.size() / 5; }
+static int setFirst(int s) { return s < numSets() ? s * 5 : 0; }
+static int setLast(int s) { return s < numSets() ? s * 5 + 4 : (int)TRACKS.size() - 1; }
 bool optItems = true, paused = false, quit = false;
 int optCpu = -1;        // CPU cars: -1 = fill every free slot, 0 = none, otherwise that many
 int optDiff = 1;        // CPU level: 0 easy, 1 normal, 2 hard
@@ -141,6 +144,7 @@ void updateRace(float frameDt) {
         const Car& c = cars[i];
         float sp = hypotf(c.vx, c.vy);
         snd::eng[i].tf = 48 + sp * 1.25f + (c.turbo > 0 ? 40 : 0) + i * 3;
+        snd::eng[i].tpan = snd::panOf(c.x);
         snd::eng[i].tv = (c.on && c.dead <= 0) ? (attract ? 0.0f : (c.human ? 0.07f : 0.022f)) : 0;
     }
     if (attract) return;
@@ -192,6 +196,7 @@ void drawHud() {
         drawTextC(fontS, (int)c.x, (int)c.y - 16, buf, CAR_COL[c.slot]);
         pset((int)c.x, (int)c.y - 7, C_WHITE); pset((int)c.x - 1, (int)c.y - 8, C_WHITE); pset((int)c.x + 1, (int)c.y - 8, C_WHITE);
     }
+    for (const Car& c : cars) if (c.on && c.startMsg > 0 && c.dead <= 0 && ((frameNo >> 2) & 1)) drawTextC(fontS, (int)c.x, (int)c.y - (c.human && raceT < 2.5f ? 26 : 16), "TURBO START!", C_YELLOW);
     if (endT > 0 && stateT == 0 && raceT > endT - 10) { snprintf(buf, sizeof(buf), "%d", (int)ceilf(endT - raceT)); drawTextC(fontL, W / 2, 20, buf, C_YELLOW); }
     if (stateT > 0) drawTextC(fontL, W / 2, 100, "RACE OVER", C_YELLOW);
     if (paused) { rectf(W / 2 - 130, 82, 260, 48, C_BLACK); drawTextC(fontL, W / 2, 90, "PAUSED", C_WHITE); drawTextC(fontS, W / 2, 116, DESKTOP ? "START/ENTER: RESUME   " BRAKE_LABEL "/ESC: QUIT RACE" : START_LABEL ": RESUME   " BRAKE_LABEL ": QUIT RACE", C_YELLOW); }
@@ -213,7 +218,7 @@ static void updateTitle(float frameDt) {
         int dir = (EDGE(d, r) ? 1 : 0) - (EDGE(d, l) ? 1 : 0);
         if (dir) {
             snd::menu();
-            if (menuSel == 0) { optTrack = (optTrack + dir + (int)TRACKS.size()) % (int)TRACKS.size(); change = true; }
+            if (menuSel == 0) { optSet = (optSet + dir + numSets() + 1) % (numSets() + 1); change = true; }
             if (menuSel == 1) optLaps = std::max(1, std::min(9, optLaps + dir));
             if (menuSel == 2) {     // ALL, 1, 2, ... (as many as there are free slots), OFF
                 int free = 5 - humanCount(), n = cpuCount();
@@ -226,11 +231,11 @@ static void updateTitle(float frameDt) {
         }
     }
     for (int i = 0; i < 5; i++) if (joined[i] >= 2 && !devs[joined[i]].present) joined[i] = -1;
-    if (change) startRace(optTrack, true);
+    if (change) startRace(setFirst(optSet), true);
     if (humanCount() == 0) for (int d = 0; d < NDEV; d++) if (devs[d].present && EDGE(d, start)) { joined[0] = d; break; }
     if (anyEdgeStart() && humanCount() > 0) {
         for (int i = 0; i < 5; i++) { cars[i].points = 0; totalPts[i] = 0; }
-        startRace(optTrack, false);
+        startRace(setFirst(optSet), false);
     }
 }
 
@@ -238,7 +243,7 @@ static void drawTitle() {
     backdrop(0.5f);
     char buf[80];
     const char* title = GAME_TITLE;
-    rectf(W / 2 - 80, 10, 160, 34, C_BLACK); rectf(40, 87, 240, 60, C_BLACK); rectf(20, 150, 280, 13, C_BLACK); rectf(20, 168, 280, 68, C_BLACK);
+    rectf(W / 2 - 80, 10, 160, 34, C_BLACK); rectf(28, 87, 264, 60, C_BLACK); rectf(20, 150, 280, 13, C_BLACK); rectf(20, 168, 280, 68, C_BLACK);
     int tw = textW(fontL, title), tx = W / 2 - tw / 2;
     drawTextRaw(fontL, tx + 2, 16, title, C_BLACK); drawTextRaw(fontL, tx + 1, 15, title, C_RED); drawTextRaw(fontL, tx, 14, title, C_YELLOW);
     drawTextC(fontS, W / 2, 34, "BY RSN8887", C_PASTELCYAN);
@@ -251,18 +256,18 @@ static void drawTitle() {
         else if ((frameNo >> 5) & 1) drawTextRaw(fontS, x + 4, 63, "PRESS", C_GREY), drawTextRaw(fontS, x + 4, 71, GAS_LABEL, C_GREY);
         else drawTextRaw(fontS, x + 4, 67, cpuSlot(i) ? "CPU" : "---", C_GREY);
     }
-    const char* names[5] = { "TRACK", "LAPS", "CPU CARS", "CPU LEVEL", "BONUS ITEMS" };
+    const char* names[5] = { "TRACK SET", "LAPS", "CPU CARS", "CPU LEVEL", "BONUS ITEMS" };
     static const char* levels[3] = { "EASY", "NORMAL", "HARD" };
     for (int i = 0; i < 5; i++) {
         int y = 91 + i * 11;
         uint32_t col = menuSel == i ? C_YELLOW : C_WHITE;
-        if (i == 0) snprintf(buf, sizeof(buf), "< %d %s >", optTrack + 1, TRACKS[optTrack].name);
+        if (i == 0) { if (optSet < numSets()) snprintf(buf, sizeof(buf), "< %d (TRACKS %d-%d) >", optSet + 1, setFirst(optSet) + 1, setLast(optSet) + 1); else snprintf(buf, sizeof(buf), "< COMPLETE (TRACKS 1-%d) >", (int)TRACKS.size()); }
         else if (i == 1) snprintf(buf, sizeof(buf), "< %d >", optLaps);
         else if (i == 2) { if (optCpu < 0) snprintf(buf, sizeof(buf), "< ALL >"); else if (cpuCount() == 0) snprintf(buf, sizeof(buf), "< OFF >"); else snprintf(buf, sizeof(buf), "< %d >", cpuCount()); }
         else if (i == 3) snprintf(buf, sizeof(buf), "< %s >", levels[optDiff]);
         else snprintf(buf, sizeof(buf), "< %s >", optItems ? "ON" : "OFF");
-        drawText(fontS, 60, y, names[i], col); drawText(fontS, 136, y, buf, col);
-        if (menuSel == i) drawText(fontS, 48, y, ">", C_YELLOW);
+        drawText(fontS, 44, y, names[i], col); drawText(fontS, 120, y, buf, col);
+        if (menuSel == i) drawText(fontS, 34, y, ">", C_YELLOW);
     }
     if (humanCount() > 0) { if ((frameNo >> 4) & 1) drawTextC(fontS, W / 2, 153, DESKTOP ? "PRESS START OR ENTER TO RACE" : "PRESS " START_LABEL " TO RACE", C_GREEN); }
     else drawTextC(fontS, W / 2, 153, "PRESS " GAS_LABEL " TO JOIN - UP TO 5 PLAYERS", C_WHITE);
@@ -289,7 +294,10 @@ static void drawResults(bool final) {
     char buf[80];
     rectf(50, 58, 220, 100, C_BLACK); rectf(40, 196, 240, 30, C_BLACK);
     drawTextC(fontL, W / 2, 20, final ? "CHAMPIONSHIP" : "RESULTS", C_YELLOW);
-    if (!final) { snprintf(buf, sizeof(buf), "TRACK %d - %s", curTrack + 1, def->name); drawTextC(fontS, W / 2, 42, buf, C_WHITE); }
+    if (!final) snprintf(buf, sizeof(buf), "TRACK %d - %s", curTrack + 1, def->name);
+    else if (optSet < numSets()) snprintf(buf, sizeof(buf), "TRACK SET %d COMPLETE", optSet + 1);
+    else snprintf(buf, sizeof(buf), "ALL %d TRACKS COMPLETE", (int)TRACKS.size());
+    drawTextC(fontS, W / 2, 42, buf, C_WHITE);
     int order[8], n = 0;
     if (final) { for (int i = 0; i < 5; i++) if (cars[i].on) order[n++] = i; sortSmall(order, n, [](int a, int b) { return cars[a].points > cars[b].points; }); }
     else { n = resultN; for (int i = 0; i < n; i++) order[i] = resultOrder[i]; }
@@ -304,12 +312,17 @@ static void drawResults(bool final) {
         if (!final) { snprintf(buf, sizeof(buf), "+%d", POINTS[r]); drawText(fontS, 174, y, buf, C_WHITE); }
         snprintf(buf, sizeof(buf), "%3d", c.points); drawText(fontS, 216, y, buf, C_YELLOW);
     }
-    if (final && n > 0) { snprintf(buf, sizeof(buf), "%s WINS THE CUP!", CAR_NAME[order[0]]); if ((frameNo >> 4) & 1) drawTextC(fontS, W / 2, 170, buf, CAR_COL[order[0]]); }
+    if (final && n > 0) {
+        rectf(40, 162, 240, 30, C_BLACK);
+        snprintf(buf, sizeof(buf), "%s WINS THE CUP!", CAR_NAME[order[0]]);
+        if ((frameNo >> 4) & 1) drawTextC(fontS, W / 2, 166, buf, CAR_COL[order[0]]);
+        if (optSet < numSets()) drawTextC(fontS, W / 2, 179, optSet + 1 < numSets() ? "NOW TRY THE NEXT TRACK SET!" : "NOW TRY THE COMPLETE TRACK SET!", C_WHITE);
+    }
     if (stateT > 1.0f) drawTextC(fontS, W / 2, 200, final ? "PRESS " START_LABEL " FOR TITLE SCREEN" : "PRESS " START_LABEL " FOR NEXT TRACK", C_GREEN);
     drawTextC(fontS, W / 2, 214, DESKTOP ? BRAKE_LABEL "/ESC: TITLE SCREEN" : BRAKE_LABEL ": TITLE SCREEN", C_GREY);
 }
 
-static void toTitle() { for (int i = 0; i < 5; i++) cars[i].points = 0; startRace(optTrack, true); }
+static void toTitle() { for (int i = 0; i < 5; i++) cars[i].points = 0; startRace(setFirst(optSet), true); }
 
 void frame(float frameDt) {
     frameNo++;
@@ -317,7 +330,7 @@ void frame(float frameDt) {
     switch (state) {
     case ST_TITLE:
         updateTitle(frameDt);
-        if (state == ST_TITLE) { if (anyEdgeBack()) quit = true; if (stateT > 40) { startRace((curTrack + 1) % (int)TRACKS.size(), true); } drawTitle(); }
+        if (state == ST_TITLE) { if (anyEdgeBack()) quit = true; if (stateT > 40) { startRace(curTrack + 1 > setLast(optSet) ? setFirst(optSet) : curTrack + 1, true); } drawTitle(); }
         else { backdrop(1); drawHud(); }
         break;
     case ST_RACE:
@@ -330,11 +343,11 @@ void frame(float frameDt) {
     case ST_FINAL:
         stateT += frameDt; stepAmbient(frameDt);
         drawResults(state == ST_FINAL);
-        if (anyEdgeBack() || (stateT > 1.0f && anyEdgeBrake())) { toTitle(); break; }
+        if (anyEdgeBack() || (stateT > 1.0f && anyEdgeBrake())) { if (state == ST_FINAL && optSet < numSets()) optSet++; toTitle(); break; }
         if (stateT > 1.0f && anyEdgeStart()) {
-            if (state == ST_FINAL) toTitle();
-            else if (curTrack + 1 >= (int)TRACKS.size()) { state = ST_FINAL; stateT = 0; }
-            else { optTrack = curTrack + 1; startRace(curTrack + 1, false); }
+            if (state == ST_FINAL) { if (optSet < numSets()) optSet++; toTitle(); }       // back to the title with the next set selected
+            else if (curTrack >= setLast(optSet)) { state = ST_FINAL; stateT = 0; }
+            else startRace(curTrack + 1, false);
         }
         break;
     }

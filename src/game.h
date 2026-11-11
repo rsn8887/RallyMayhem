@@ -18,7 +18,7 @@
 #endif
 
 #define GAME_TITLE "RALLY MAYHEM"
-#define GAME_VERSION "1.0.0"
+#define GAME_VERSION "1.1.0"
 
 // on-screen button names (SDL's "A"/"B"/"Y" are Cross/Circle/Triangle on the PS Vita)
 #if defined(__vita__)
@@ -90,10 +90,11 @@ void drawTextRaw(const PFont& f, int x, int y, const char* s, uint32_t col);
 void drawText(const PFont& f, int x, int y, const char* s, uint32_t col, bool shadow = true);
 void drawTextC(const PFont& f, int cx, int y, const char* s, uint32_t col);
 
-// ------------------------------------------------------------------ level data
+// ------------------------------------------------------------------ track data
 enum { S_NONE, S_OFF, S_ROAD, S_DIRT, S_ICE, S_WATER, S_SHALLOW, S_PUDDLE, S_BOOST, S_PLANK, S_METAL };
 static inline bool roadLike(uint8_t s) { return s >= S_ROAD && s != S_WATER; }
 static const float CAR_HL = 4.5f, CAR_HW = 2.5f;                 // half length / width of a car (9x5 pixels)
+const float SLOPE_PULL = 70;        // extra slow-down uphill / speed-up downhill (0 = plain gravity only)
 static const int NSECT = 10;
 static const float TRAIN_HW = 4, WAGON_LEN = 18, WAGON_STEP = 20; // trains are 9 pixels wide
 static const int WAGONS = 5;
@@ -190,6 +191,8 @@ struct Car {
     int lap = 0, sector = 0, idx = 0, place = 0, weapon = 0, ammo = 0, points = 0, rank = 0;
     float lostT = 0, turbo = 0, spin = 0, dead = 0, invuln = 0, stuck = 0, rev = 0, ftime = 0, pitch = 0, roll = 0, skill = 1, lane = 0, crashCd = 0, aiFire = 0, power = 1;
     bool pUp = false, pDown = false;
+    bool pAcc = false, startHit = false, startMissed = false, startDone = false;   // turbo start (see stepCar)
+    float startMsg = 0;
 };
 struct Proj { int type; float x, y, vx, vy, z, life; int owner; };
 struct Mine { float x, y, z, arm; int owner; };
@@ -225,7 +228,8 @@ void addController(int joyIndex);
 void removeController(SDL_JoystickID id);
 
 // ------------------------------------------------------------------ game flow
-extern int state, menuSel, optTrack, optLaps, curTrack;
+enum { ST_TITLE, ST_RACE, ST_RESULTS, ST_FINAL };
+extern int state, menuSel, optSet, optLaps, curTrack;
 extern bool optItems, paused, quit;
 extern int optCpu, optDiff;
 extern int joined[5];

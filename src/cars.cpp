@@ -14,7 +14,7 @@ static void burst(float x, float y, int n, float sp, float life, const uint32_t*
 static const uint32_t FIRE_COLS[4] = { RGB(255, 255, 0), RGB(255, 128, 0), RGB(255, 0, 0), RGB(255, 255, 255) };
 static const uint32_t WATER_COLS[3] = { RGB(255, 255, 255), RGB(170, 220, 255), RGB(72, 140, 232) };
 static const uint32_t SMOKE_COLS[2] = { RGB(128, 128, 128), RGB(64, 64, 64) };
-static void explosion(float x, float y) { burst(x, y, 40, 60, 0.6f, FIRE_COLS, 4); burst(x, y, 14, 25, 1.0f, SMOKE_COLS, 2); snd::explode(); }
+static void explosion(float x, float y) { burst(x, y, 40, 60, 0.6f, FIRE_COLS, 4); burst(x, y, 14, 25, 1.0f, SMOKE_COLS, 2); snd::explode(x); }
 
 // ------------------------------------------------------------------ cars
 Car cars[5];
@@ -91,8 +91,9 @@ void trainUpdate(float t) {
         tr.t = ct; tr.active = ct < travel; tr.head = tr.from + tr.dir * tr.speed * ct;
         tr.warn = tr.active || ct > tr.period - 1.8f;
         if (!attract) {
-            if (tr.active && !was) snd::horn();
-            if (tr.warn && (!wasWarn || ((int)(ct * 4) != (int)((ct - 1.0f / 120) * 4) && !tr.active))) snd::bell();
+            float sx = tr.horiz ? (tr.dir > 0 ? 0.0f : (float)W) : tr.line;     // where the train is heard
+            if (tr.active && !was) snd::horn(sx);
+            if (tr.warn && (!wasWarn || ((int)(ct * 4) != (int)((ct - 1.0f / 120) * 4) && !tr.active))) snd::bell(sx);
         }
     }
 }
@@ -126,16 +127,16 @@ static void fireWeapon(Car& c, bool forward) {
     switch (c.weapon) {
     case WP_MISSILE:
         projs.push_back({ WP_MISSILE, c.x + fx * 6 * dir, c.y + fy * 6 * dir, fx * dir * 150 + c.vx * 0.5f, fy * dir * 150 + c.vy * 0.5f, c.z + 2, 2.6f, c.slot });
-        snd::missile(); c.weapon = WP_NONE; break;
+        snd::missile(c.x); c.weapon = WP_NONE; break;
     case WP_SHOT:
         projs.push_back({ WP_SHOT, c.x + fx * 6 * dir, c.y + fy * 6 * dir, fx * dir * 300, fy * dir * 300, c.z, 1.0f, c.slot });
-        snd::shot(); if (--c.ammo <= 0) c.weapon = WP_NONE; break;
+        snd::shot(c.x); if (--c.ammo <= 0) c.weapon = WP_NONE; break;
     case WP_MINE: {
         float d = forward ? 26.f : -9.f;
         mines.push_back({ c.x + fx * d, c.y + fy * d, c.z, forward ? 0.9f : 0.5f, c.slot });
-        snd::mineDrop(); c.weapon = WP_NONE;
+        snd::mineDrop(c.x); c.weapon = WP_NONE;
     } break;
-    case WP_TURBO: c.turbo = 2.2f; snd::turbo(); c.weapon = WP_NONE; break;
+    case WP_TURBO: c.turbo = 2.2f; snd::turbo(c.x); c.weapon = WP_NONE; break;
     }
 }
 
@@ -169,6 +170,9 @@ Input aiInput(Car& c, float dt) {
     c.power = (rampAhead || gapAhead) ? 1.0f : c.skill;   // CPU cars are down on power, except on the run-up to a jump
     in.acc = sp < vSafe && fabsf(d) < 1.3f;
     if (sp > vSafe + 12 || (fabsf(d) > 1.0f && sp > 45)) in.brk = true;
+    // A car that waits (barrier, ferry, train) is not "stuck" - but only while it stands on the road
+    // facing the right way; otherwise the usual reverse / put-back-on-track rescue has to kick in.
+    bool queued = roadLike(sf) && fabsf(angDiff(atan2f(sm[c.idx].ty, sm[c.idx].tx), c.a)) < 0.9f;
     // drawbridges: stop at the barrier unless there is time to get across
     for (const Drawbridge& db : bridges) {
         int ahead = ((db.k0 - c.idx) % NS + NS) % NS;
@@ -176,7 +180,7 @@ Input aiInput(Car& c, float dt) {
         if (dist > 75 || dist < 3) continue;
         float toClose = db.open ? db.period - 4.0f - db.t : -1;
         float need = (dist + (db.k1 - db.k0) * spacing + 14) / std::max(sp, 45.0f);
-        if (toClose < need) { in.acc = sp < 22 && dist > 17; if (dist < 13 + sp * 0.4f && vfw > 8) in.brk = true; c.stuck = 0; }
+        if (toClose < need) { in.acc = sp < 22 && dist > 17; if (dist < 13 + sp * 0.4f && vfw > 8) in.brk = true; if (queued) c.stuck = 0; }
     }
     // ferries: wait at the dock, roll on, wait for the far side, roll off
     for (const Ferry& f : ferries) {
@@ -198,7 +202,7 @@ Input aiInput(Car& c, float dt) {
             for (const Car& o : cars) if (o.on && o.dead <= 0 && onFerry(f, o.x, o.y)) nOn++;
             bool board = f.state == 0 && f.tLeft > (dist + 12) / std::max(sp, 36.0f) + 0.4f && nOn < 4;
             if (board) { if (sp > 52) in.acc = false; }
-            else { in.acc = sp < 22 && dist > 15; if (dist < 11 + sp * 0.4f && vfw > 6) in.brk = true; if (dist < 8) in.acc = false; c.stuck = 0; }
+            else { in.acc = sp < 22 && dist > 15; if (dist < 11 + sp * 0.4f && vfw > 6) in.brk = true; if (dist < 8) in.acc = false; if (queued) c.stuck = 0; }
         }
     }
     // level crossings
@@ -209,7 +213,7 @@ Input aiInput(Car& c, float dt) {
         if (cr.ramp && sp > 70) continue;
         float tH, tT; trainTimes(trains[cr.train], cr.along, tH, tT);
         float eta = dist / std::max(sp, 30.0f);
-        if (eta > tH - 0.45f && eta < tT + 0.3f) { in.acc = false; if (vfw > 12 && dist < 16 + sp * 0.35f) in.brk = true; c.stuck = 0; }
+        if (eta > tH - 0.45f && eta < tT + 0.3f) { in.acc = false; if (vfw > 12 && dist < 16 + sp * 0.35f) in.brk = true; if (queued) c.stuck = 0; }
     }
     // stuck handling
     if (raceT > 0 && sp < 7 && !c.air) c.stuck += dt; else if (sp > 15) c.stuck = 0;
@@ -240,6 +244,24 @@ void stepCar(Car& c, Input in, float dt) {
     if (c.dead > 0) { c.dead -= dt; if (c.dead <= 0) respawn(c); return; }
     if (c.invuln > 0) c.invuln -= dt;
     if (c.crashCd > 0) c.crashCd -= dt;
+    // Turbo start: pressing the gas just as the light turns green (a little early or late still counts)
+    // gives a short boost. Pressing in the half second before that, or holding the gas through the
+    // countdown, does not (so hammering the button is no use).
+    if (!c.startDone) {
+        const float EARLY = -0.08f, LATE = 0.22f;
+        bool edge = in.acc && !c.pAcc;
+        if (c.human && !c.finished) {
+            if (edge && raceT < EARLY && raceT > -0.6f) c.startMissed = true;
+            if (edge && raceT >= EARLY && raceT <= LATE && !c.startMissed) c.startHit = true;
+        } else if (raceT >= 0 && !c.startHit && !c.startMissed) {       // CPU cars get it now and then
+            static const float chance[3] = { 0.10f, 0.25f, 0.45f };
+            if (grng.f() < chance[optDiff]) c.startHit = true; else c.startMissed = true;
+        }
+        if (raceT >= 0 && c.startHit) { c.turbo = 1.1f; c.startMsg = 1.2f; c.startDone = true; snd::turbo(c.x); }
+        if (raceT > LATE) c.startDone = true;
+    }
+    c.pAcc = in.acc;
+    if (c.startMsg > 0) c.startMsg -= dt;
     if (raceT < 0) { in.acc = in.brk = in.l = in.r = in.up = in.down = false; }
     if (in.reset && c.human && raceT > 0) { killCar(c, 0.8f); return; }
     int p = pixAt(c.x, c.y), ly = activeLayer(p, c.z);
@@ -281,16 +303,21 @@ void stepCar(Car& c, Input in, float dt) {
         } else drag += 2;
         vf -= vf * drag * dt;
         if (vf < -38) vf = -38;
-        if (s == S_BOOST && vf > 5 && vf < 175) { vf += 520 * dt; if (c.crashCd <= 0) { snd::boost(); c.crashCd = 0.5f; } }
+        if (s == S_BOOST && vf > 5 && vf < 175) { vf += 520 * dt; if (c.crashCd <= 0) { snd::boost(c.x); c.crashCd = 0.5f; } }
         float lat0 = vl;
         vl *= expf(-grip * dt);
         c.vx = fx * vf - fy * vl; c.vy = fy * vf + fx * vl;
-        // gravity along slopes
+        // gravity along slopes (gx, gy: height change over two pixels)
         int ix = p % W, iy = p / W;
         if (ix > 0 && ix < W - 1 && iy > HUD_H && iy < H - 1) {
             float gx = ht[ly][p + 1] - ht[ly][p - 1], gy = ht[ly][p + W] - ht[ly][p - W];
-            if (fabsf(gx) < 2.5f) c.vx -= 60 * gx * dt;
-            if (fabsf(gy) < 2.5f) c.vy -= 60 * gy * dt;
+            if (fabsf(gx) >= 2.5f) gx = 0;
+            if (fabsf(gy) >= 2.5f) gy = 0;
+            c.vx -= 60 * gx * dt; c.vy -= 60 * gy * dt;
+            // climbing costs speed, rolling downhill gains it: extra pull along the car's heading
+            // (capped, and weaker where the engine is weaker, so no slope can stall a car)
+            float along = clampf(gx * fx + gy * fy, -0.7f, 0.7f) * (acc / 150);
+            c.vx -= SLOPE_PULL * along * fx * dt; c.vy -= SLOPE_PULL * along * fy * dt;
         }
         // skid marks and dust
         float sp = hypotf(c.vx, c.vy);
@@ -300,7 +327,7 @@ void stepCar(Car& c, Input in, float dt) {
                 int q = pixAt(c.x - fx * 3.2f - fy * 2.0f * side, c.y - fy * 3.2f + fx * 2.0f * side);
                 if (surf[0][q] == s && ((ground[q] >> 8) & 255) > 56) ground[q] = shade(ground[q], 0.8f);
             }
-            if (c.human) snd::skidTarget = std::max(snd::skidTarget, 0.12f);
+            if (c.human) { snd::skidTarget = std::max(snd::skidTarget, 0.12f); snd::skidPan = snd::panOf(c.x); }
         }
         if (sp > 30 && (frameNo % 3) == 0) {
             if (s == S_DIRT || (s == S_OFF && sandy())) addPart(c.x - fx * 4, c.y - fy * 4, (grng.f() - 0.5f) * 20, (grng.f() - 0.5f) * 20 - 5, 0.5f, grng.range(2) ? RGB(255, 160, 64) : RGB(192, 96, 0));
@@ -326,7 +353,7 @@ void stepCar(Car& c, Input in, float dt) {
             float vn = c.vx * nx + c.vy * ny;
             if (vn < 0) {
                 c.vx -= 1.35f * vn * nx; c.vy -= 1.35f * vn * ny; c.vx *= 0.97f; c.vy *= 0.97f;
-                if (-vn > 28 && c.crashCd <= 0) { snd::crash(clampf(-vn / 90, 0.3f, 1)); c.crashCd = 0.25f; burst(tx - nx * 3, ty - ny * 3, 5, 30, 0.2f, FIRE_COLS, 2); }
+                if (-vn > 28 && c.crashCd <= 0) { snd::crash(clampf(-vn / 90, 0.3f, 1), c.x); c.crashCd = 0.25f; burst(tx - nx * 3, ty - ny * 3, 5, 30, 0.2f, FIRE_COLS, 2); }
             }
             tx = c.x + c.vx * dt; ty = c.y + c.vy * dt;
             if (!carBlocked(c, tx, ty, c.a)) { c.x = tx; c.y = ty; }
@@ -348,7 +375,7 @@ void stepCar(Car& c, Input in, float dt) {
     p = pixAt(c.x, c.y); ly = activeLayer(p, c.z);
     float hg = ht[ly][p], sp = hypotf(c.vx, c.vy), slope = 0;
     if (!c.air) {
-        if (hg < c.z - 1.3f) { c.air = true; c.vz = c.slopeVz; if (c.vz > 15) snd::jump(); }
+        if (hg < c.z - 1.3f) { c.air = true; c.vz = c.slopeVz; if (c.vz > 15) snd::jump(c.x); }
         else {
             c.z = hg;
             if (sp > 5) {
@@ -363,7 +390,7 @@ void stepCar(Car& c, Input in, float dt) {
         c.vz -= 250 * dt; c.z += c.vz * dt;
         if (c.z <= hg) {
             c.z = hg; c.air = false; c.slopeVz = 0;
-            if (c.vz < -30) { snd::land(); if (surf[ly][p] != S_WATER) burst(c.x, c.y, 6, 20, 0.3f, SMOKE_COLS, 2); }
+            if (c.vz < -30) { snd::land(c.x); if (surf[ly][p] != S_WATER) burst(c.x, c.y, 6, 20, 0.3f, SMOKE_COLS, 2); }
         }
         c.gvis += (hg - c.gvis) * std::min(1.0f, dt * 9); if (c.gvis > c.z) c.gvis = c.z;
         slope = clampf(c.vz / std::max(sp, 30.0f), -0.6f, 0.6f);
@@ -381,7 +408,7 @@ void stepCar(Car& c, Input in, float dt) {
     bool realRoad = roadLike(s);
     for (const Ferry& f : ferries) if (!c.air && onFerry(f, c.x, c.y) && (s == S_WATER || s == S_OFF)) s = S_PLANK;
     if (!c.air && ly == 0 && spanMask[p] && bridges[spanMask[p] - 1].lift > 0.3f) s = S_WATER;      // the drawbridge opened under the car
-    if (!c.air && s == S_WATER) { burst(c.x, c.y, 26, 45, 0.6f, WATER_COLS, 3, 60); snd::splash(); killCar(c, 1.4f); return; }
+    if (!c.air && s == S_WATER) { burst(c.x, c.y, 26, 45, 0.6f, WATER_COLS, 3, 60); snd::splash(c.x); killCar(c, 1.4f); return; }
     if (c.invuln <= 0 && trainHits(c)) { explosion(c.x, c.y); killCar(c, 1.6f); return; }
     // progress
     if (roadLike(s) || c.air) {
@@ -415,7 +442,7 @@ void collideCars() {
         if (rv < 0) {
             float jimp = -(1.5f) * rv / 2;
             a.vx += jimp * nx; a.vy += jimp * ny; b.vx -= jimp * nx; b.vy -= jimp * ny;
-            if (-rv > 25 && a.crashCd <= 0) { snd::crash(clampf(-rv / 100, 0.3f, 0.8f)); a.crashCd = 0.25f; }
+            if (-rv > 25 && a.crashCd <= 0) { snd::crash(clampf(-rv / 100, 0.3f, 0.8f), a.x); a.crashCd = 0.25f; }
         }
         if (!carBlocked(a, a.x + nx * 0.5f, a.y + ny * 0.5f, a.a)) { a.x += nx * 0.5f; a.y += ny * 0.5f; }
         if (!carBlocked(b, b.x - nx * 0.5f, b.y - ny * 0.5f, b.a)) { b.x -= nx * 0.5f; b.y -= ny * 0.5f; }
@@ -446,7 +473,7 @@ void stepWeapons(float dt) {
             float d = hypotf(c.x - pr.x, c.y - pr.y);
             if (d < 5.5f && fabsf(c.z - pr.z) < (pr.type == WP_MISSILE ? 9 : 4)) {
                 if (pr.type == WP_MISSILE) { explosion(c.x, c.y); hitCar(c, 1.2f, 0.25f, 45); }
-                else { burst(c.x, c.y, 8, 30, 0.25f, FIRE_COLS, 3); snd::crash(0.7f); hitCar(c, 0.6f, 0.55f, 0); }
+                else { burst(c.x, c.y, 8, 30, 0.25f, FIRE_COLS, 3); snd::crash(0.7f, c.x); hitCar(c, 0.6f, 0.55f, 0); }
                 dead = true; break;
             }
         }
@@ -465,7 +492,7 @@ void stepWeapons(float dt) {
         if (it.timer > 0) { it.timer -= dt; if (it.timer <= 0) it.type = 1 + grng.range(WP_COUNT - 1); continue; }
         for (Car& c : cars) if (c.on && c.dead <= 0 && !c.finished && c.weapon == WP_NONE && fabsf(c.z - it.z) < 3 && hypotf(c.x - it.x, c.y - it.y) < 7.0f) {
             c.weapon = it.type; c.ammo = c.weapon == WP_SHOT ? 3 : 1; it.timer = 6;
-            if (c.human) snd::pickup();
+            if (c.human) snd::pickup(c.x);
             burst(it.x, it.y, 8, 25, 0.3f, FIRE_COLS, 4);
             break;
         }
@@ -491,7 +518,7 @@ void updateMechanics(float dt, float t) {
         float u = ct - (down + 1.5f);       // seconds since the barriers closed
         d.lift = u < 0 ? 0 : (u < 0.8f ? u / 0.8f : (u < 3.2f ? 1 : std::max(0.f, 1 - (u - 3.2f) / 0.8f)));
         if (d.open != wasOpen) for (int p : d.barrier) dynSolid[p] = d.open ? 0 : 1;
-        if (!attract && d.warn && d.open && (!wasWarn || (int)(ct * 4) != (int)((ct - dt) * 4))) snd::bell();
+        if (!attract && d.warn && d.open && (!wasWarn || (int)(ct * 4) != (int)((ct - dt) * 4))) snd::bell(sm[d.k0].x);
     }
     for (Ferry& f : ferries) {
         f.tLeft -= dt;

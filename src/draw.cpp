@@ -77,7 +77,7 @@ void drawIcon(int x, int y, int w, bool tile) {
 std::vector<Drop> drops, streaks;
 std::vector<Leaf> leaves;
 static float birdX = -50, birdY = 60;
-struct Tumble { float x, y, ph; };
+struct Tumble { float x, y, ph, vx = 22, vy = 0, z = 0, vz = 0, hitCd = 0; };    // z: height above the ground
 static Tumble tumble[3] = { { 40, 70, 0 }, { 200, 150, 2 }, { 120, 215, 4 } };
 
 void stepAmbient(float dt) {
@@ -129,9 +129,27 @@ void stepAmbient(float dt) {
             leaves[i] = leaves.back(); leaves.pop_back();
         } else i++;
     }
+    // tumbleweeds drift with the wind; a car that runs into one knocks it away
     if (sandy()) for (Tumble& t : tumble) {
-        t.x += (22 + 6 * sinf(t.ph * 0.3f)) * dt; t.ph += 6 * dt; t.y += sinf(t.ph * 0.21f) * 4 * dt;
-        if (t.x > W + 8) { t.x = -8; t.y = HUD_H + 10 + grng.f() * (H - HUD_H - 20); }
+        float windV = 22 + 6 * sinf(t.ph * 0.3f), sp = hypotf(t.vx, t.vy);
+        t.vx += (windV - t.vx) * std::min(1.0f, 1.2f * dt); t.vy += (sinf(t.ph * 0.21f) * 4 - t.vy) * std::min(1.0f, 1.2f * dt);
+        if (t.hitCd > 0) t.hitCd -= dt;
+        else for (const Car& c : cars) {
+            if (!c.on || c.dead > 0 || c.z - c.gvis > 4 || t.z > 5) continue;
+            float dx = t.x - c.x, dy = t.y - c.y, d = hypotf(dx, dy), cs = hypotf(c.vx, c.vy);
+            if (d > 6.5f || cs < 8) continue;
+            if (d < 0.1f) { dx = 1; dy = 0; d = 1; }
+            // thrown ahead of the car and a little to the side it was hit on, with a hop
+            t.vx = c.vx * 1.25f + dx / d * (20 + cs * 0.25f); t.vy = c.vy * 1.25f + dy / d * (20 + cs * 0.25f);
+            t.vz = 34 + cs * 0.35f; t.hitCd = 0.35f;
+            if (!attract) snd::rustle(t.x);
+            for (int k = 0; k < 5; k++) addPart(t.x, t.y - 1, (grng.f() - 0.5f) * 40, -grng.f() * 30, 0.35f, grng.range(2) ? RGB(144, 88, 16) : RGB(208, 160, 72), 90);
+            break;
+        }
+        t.x += t.vx * dt; t.y += t.vy * dt; t.ph += (2 + sp * 0.18f) * dt;
+        t.vz -= 200 * dt; t.z += t.vz * dt;
+        if (t.z <= 0) { t.z = 0; t.vz = t.vz < -25 ? -t.vz * 0.5f : 0; }                 // bounces a few times
+        if (t.x > W + 8 || t.x < -30 || t.y < HUD_H - 20 || t.y > H + 20) { t.x = -8; t.y = HUD_H + 10 + grng.f() * (H - HUD_H - 20); t.vx = 22; t.vy = 0; t.z = t.vz = 0; }
     }
     if (birdX < -40) { if (grng.range(900) == 0 && weather == WX_CLEAR && !night) { birdX = W + 10; birdY = 30 + grng.f() * 170; } }
     else birdX -= 38 * dt;
@@ -288,9 +306,9 @@ void drawWorld() {
         for (int j = 0; j < 5; j++) for (int i = 0; i < 5; i++) if (ms[j][i] != '.') pset(x - 2 + i, y - 2 + j, ms[j][i] == 'r' ? ((m.arm <= 0 && (frameNo & 8)) ? RGB(255, 40, 40) : RGB(110, 20, 20)) : RGB(36, 36, 42));
     }
     if (sandy()) for (const Tumble& tb : tumble) {
-        int x = (int)tb.x, y = (int)(tb.y - fabsf(sinf(tb.ph * 0.5f)) * 3), f = (int)(tb.ph) & 1;
+        int x = (int)tb.x, y = (int)(tb.y - fabsf(sinf(tb.ph * 0.5f)) * 3 - tb.z), f = (int)(tb.ph) & 1;
         if (!inb(x, (int)tb.y) || surf[0][pixAt(tb.x, tb.y)] == S_WATER) continue;
-        for (int i = -1; i <= 2; i++) pdark(x + i + 1, (int)tb.y + 3, 0.7f);
+        for (int i = -1; i <= 2; i++) pdark(x + i + 1 + (int)(tb.z * 0.5f), (int)tb.y + 3, 0.7f);
         static const char* tw[2][5] = { { ".bbb.", "b.l.b", "bl.lb", "b.l.b", ".bbb." }, { ".bbb.", "bl.lb", "b.l.b", "bl.lb", ".bbb." } };
         for (int j = 0; j < 5; j++) for (int i = 0; i < 5; i++) if (tw[f][j][i] != '.') pset(x - 2 + i, y - 2 + j, tw[f][j][i] == 'b' ? RGB(144, 88, 16) : RGB(208, 160, 72));
     }
