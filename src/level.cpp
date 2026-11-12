@@ -324,12 +324,23 @@ static void drawCanopy(int x, int y, int r, int kind) {
     }
     int cy = y - 4;
     if (kind == 1) {
-        static const int wd[10] = { 1, 1, 3, 3, 5, 5, 7, 7, 9, 9 };
-        for (int j = 0; j < 10; j++) for (int i = -wd[j] / 2; i <= wd[j] / 2; i++) {
-            uint32_t c = (i < 0 && (j & 1) == 0) ? L : (i == wd[j] / 2 ? K : (i > 0 ? D : M));
-            if (j & 1 && i == -wd[j] / 2) c = D;
-            opx(x + i, cy - 6 + j, c, 99);
-            if (inb(x + i, cy - 6 + j)) castH[(cy - 6 + j) * W + x + i] = 5;
+        // a standing fir seen from the front: three tiers of branches that widen downwards, lit from the
+        // top left, each tier throwing a dark line onto the one below. It casts no shadow itself: the
+        // shadow comes from the foot of the tree (see addLeafTree), which is what makes it stand up.
+        static const int wd[10] = { 1, 3, 3, 5, 3, 5, 7, 5, 7, 9 };
+        for (int j = 0; j < 10; j++) {
+            int hw = wd[j] / 2;
+            bool under = j > 0 && wd[j] < wd[j - 1];        // tucked in below the tier above
+            bool skirt = j == 9 || wd[j + 1] < wd[j];       // the widest row of a tier
+            for (int i = -hw; i <= hw; i++) {
+                uint32_t c = i < 0 ? (skirt ? L : M) : (i == 0 ? M : D);
+                if (under) c = i <= 0 ? D : K;
+                else if (i == hw && hw > 1) c = K;
+                if (theme == TH_WINTER && skirt && i > 0 && i < hw) c = RGB(190, 204, 226);   // snow on every tier
+                if (theme == TH_WINTER && skirt && i == 0) c = L;
+                if (j == 0) c = L;
+                opx(x + i, cy - 6 + j, c, 99);
+            }
         }
         return;
     }
@@ -373,6 +384,11 @@ static void addLeafTree(int x, int y, Rng& rng, int kind) {
     static const uint32_t tr[3] = { RGB(134, 84, 44), RGB(104, 64, 34), RGB(72, 44, 24) };
     gpx(x - 1, y, tr[0]); gpx(x, y, tr[1]); gpx(x + 1, y, tr[2]); gpx(x - 1, y + 1, tr[1]); gpx(x, y + 1, tr[1]); gpx(x + 1, y + 1, tr[2]);
     markSolid(x - 1, y, 3, 2, 2, 4);
+    if (kind == 1) {
+        // the shadow of a standing cone: long behind the trunk, shorter towards both sides
+        static const float cast[7] = { 2.5f, 4.5f, 6.5f, 8.5f, 6.5f, 4.5f, 2.5f };
+        for (int i = -3; i <= 3; i++) if (inb(x + i, y + 1)) castH[(y + 1) * W + x + i] = std::max(castH[(y + 1) * W + x + i], cast[i + 3]);
+    }
     drawCanopy(x, y, r, kind);
     if (kind == 4 || kind == 0 || kind == 6) treeTops.push_back({ x, y - 4, r, kind });
     markReserved(x - 6, y - 10, 13, 14);

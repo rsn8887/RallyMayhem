@@ -50,7 +50,7 @@ docker build --platform linux/amd64 -t rallymayhem-android ./rallymayhem/docker/
 docker run --rm --platform linux/amd64 -v "$(pwd)":/app -w /app -v rallymayhem-gradle:/root/.gradle rallymayhem-android \
   sh ./rallymayhem/android/build.sh build-android
 ```
-This creates `build-android/RallyMayhem-1.1.0.apk` (arm64, armv7 and x86-64), which you copy to the device and install (allow installing from unknown sources). The first build downloads the Gradle plugins into the `rallymayhem-gradle` volume, so later builds are faster. The first build also creates `build-android/rallymayhem-release.keystore`, the key the APK is signed with. Keep it, because an installed APK can only be updated by one signed with the same key. The game needs a gamepad or built-in controls; there are no touch controls. On Apple Silicon Macs the image runs under x86-64 emulation, because the Android NDK only exists for x86-64 Linux.
+This creates `build-android/RallyMayhem-1.2.0.apk` (arm64, armv7 and x86-64), which you copy to the device and install (allow installing from unknown sources). The first build downloads the Gradle plugins into the `rallymayhem-gradle` volume, so later builds are faster. The first build also creates `build-android/rallymayhem-release.keystore`, the key the APK is signed with. Keep it, because an installed APK can only be updated by one signed with the same key. The game needs a gamepad or built-in controls; there are no touch controls. On Apple Silicon Macs the image runs under x86-64 emulation, because the Android NDK only exists for x86-64 Linux.
 
 - MacOS:
 ```
@@ -59,7 +59,7 @@ cmake -S ./rallymayhem -B build
 cmake --build build -j
 open build/RallyMayhem.app
 ```
-To make a `.dmg` for sharing, run `./rallymayhem/make_dmg.sh`. It builds into `build-macos/` and puts the SDL libraries into the app, so it runs on Macs without Homebrew. The result is `build-macos/RallyMayhem-1.1.0-macOS-arm64.dmg`. The app is signed ad hoc, so the first time it has to be opened with right-click > Open.
+To make a `.dmg` for sharing, run `./rallymayhem/make_dmg.sh`. It builds into `build-macos/` and puts the SDL libraries into the app, so it runs on Macs without Homebrew. The result is `build-macos/RallyMayhem-1.2.0-macOS-arm64.dmg`. The app is signed ad hoc, so the first time it has to be opened with right-click > Open.
 
 - Windows:
 Install MSYS2 MinGW, then open a msys2 ucrt shell

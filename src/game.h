@@ -18,7 +18,7 @@
 #endif
 
 #define GAME_TITLE "RALLY MAYHEM"
-#define GAME_VERSION "1.1.0"
+#define GAME_VERSION "1.2.0"
 
 // on-screen button names (SDL's "A"/"B"/"Y" are Cross/Circle/Triangle on the PS Vita)
 #if defined(__vita__)
