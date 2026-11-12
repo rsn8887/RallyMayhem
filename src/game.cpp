@@ -34,8 +34,11 @@ static void pollDevices() {
         in.start = SDL_GameControllerGetButton(d.gc, SDL_CONTROLLER_BUTTON_START);
         in.back = SDL_GameControllerGetButton(d.gc, SDL_CONTROLLER_BUTTON_BACK);
 #ifdef __SWITCH__
-        // a single Joy-Con has only one of +/-, so either one is Start on Switch
-        in.start = in.start || in.back;
+        // A single sideways Joy-Con reports its stick click as Start and its + or - as Back. The stick
+        // gets clicked by accident all the time, so there only + or - counts as Start. On a Pro
+        // Controller, a Joy-Con pair or in handheld mode + is Start and - is Back: either one is Start.
+        if (hidGetNpadStyleSet((HidNpadIdType)(HidNpadIdType_No1 + d.id)) & (HidNpadStyleTag_NpadJoyLeft | HidNpadStyleTag_NpadJoyRight)) in.start = in.back;
+        else in.start = in.start || in.back;
         in.back = false;
 #endif
         d.cur = in;
