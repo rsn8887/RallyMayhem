@@ -1052,7 +1052,7 @@ void buildLevel(int n) {
     for (int p = 0; p < N; p++) if ((surf[0][p] == S_WATER && !bottomless()) || surf[0][p] == S_SHALLOW) waterPix.push_back(p);
     if (newWorld()) for (int p = HUD_H * W; p < N; p++) {
         if (theme == TH_WATER && !solid[0][p] && !objMask[p] && surf[1][p] == S_NONE && (surf[0][p] == S_OFF || surf[0][p] == S_ROAD) && !(surf[0][p] == S_ROAD && sm[idxm[0][p]].ramp > 0)) seaPix.push_back(p);
-        if (surf[0][p] == S_BOOST) { const Sample& S = sm[idxm[0][p]]; boostPix.push_back(p); boostVal.push_back((uint8_t)(((int)(S.arc * 2 - fabsf(latm[0][p]) * S.w * 0.9f) % 12 + 12) % 12)); }
+        if (surf[0][p] == S_BOOST) { const Sample& S = sm[idxm[0][p]]; boostPix.push_back(p); boostVal.push_back((uint8_t)(((int)(S.arc * 2 + fabsf(latm[0][p]) * S.w * 0.9f) % 12 + 12) % 12)); }
     }
     // static light map for night tracks
     if (night) {

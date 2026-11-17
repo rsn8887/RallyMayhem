@@ -171,7 +171,7 @@ bool worldRoad(int ly, int p, uint32_t& out) {
     }
     if (s == S_SHALLOW && liquid > LQ_COLD) { out = v < 10 ? waterCol(2) : (v < 40 ? waterCol(1) : mixc(waterCol(1), waterCol(2), 0.3f)); return true; }
     if (s == S_BOOST) {
-        int ph = (((int)(S.arc * 2 - a * S.w * 0.9f)) % 12 + 12) % 12;
+        int ph = (((int)(S.arc * 2 + a * S.w * 0.9f)) % 12 + 12) % 12;       // chevrons that point the way forward
         out = theme == TH_SCIFI ? (ph < 3 ? C_WHITE : (ph < 6 ? RGB(0, 232, 255) : RGB(20, 60, 130))) : (ph < 4 ? RGB(255, 224, 0) : (ph < 8 ? RGB(232, 48, 28) : RGB(255, 140, 0)));
         return true;
     }
