@@ -166,6 +166,12 @@ Input aiInput(Car& c, float dt) {
         float lb = -(b.x - T.x) * T.ty + (b.y - T.y) * T.tx;        // where it stands across the road
         if (fabsf(lb - lane) < b.r + 9) lane = lb > 0 ? lb - (b.r + 10) : lb + (b.r + 10);
     }
+    for (const Whirl& w : whirls) {         // and give whirlpools a wide berth
+        float al = (w.x - c.x) * cosf(c.a) + (w.y - c.y) * sinf(c.a);
+        if (al < -6 || al > 60) continue;
+        float lb = -(w.x - T.x) * T.ty + (w.y - T.y) * T.tx;
+        if (fabsf(lb - lane) < w.r + 2) lane = clampf(lb > 0 ? lb - (w.r + 3) : lb + (w.r + 3), -T.w / 2 + 4, T.w / 2 - 4);
+    }
     float tx = T.x - T.ty * lane, ty = T.y + T.tx * lane;
     float want = atan2f(ty - c.y, tx - c.x), d = angDiff(want, c.a);
     if (d > 0.04f) in.r = true; else if (d < -0.04f) in.l = true;

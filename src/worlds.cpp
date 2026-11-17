@@ -1024,11 +1024,18 @@ void worldCar(Car& c, float dt) {
     if (c.air) return;
     for (Pad& p : pads) if (hypotf(c.x - p.x, c.y - p.y) < p.r && sp > 12) { c.air = true; c.vz = 80; c.slopeVz = 0; p.squash = 0.35f; snd::boing(p.x); break; }
     for (const Whirl& w : whirls) {
+        // a whirlpool drags a boat round and inwards, turns it and slows it; in the middle it goes under
         float dx = c.x - w.x, dy = c.y - w.y, d = hypotf(dx, dy);
-        if (d > w.r || d < 0.5f) continue;
-        float k = 1 - d / w.r, nx = dx / d, ny = dy / d;
-        c.vx += (-nx * 70 - ny * 95) * k * dt; c.vy += (-ny * 70 + nx * 95) * k * dt;
-        c.a += 1.5f * k * dt;
+        if (d > w.r) continue;
+        if (d < 3.5f && c.invuln <= 0) {
+            static const uint32_t foam[3] = { RGB(255, 255, 255), RGB(170, 220, 255), RGB(72, 140, 232) };
+            burst(c.x, c.y, 30, 50, 0.7f, foam, 3, 60); snd::splash(c.x); killCar(c, 1.5f); return;
+        }
+        if (d < 0.5f) continue;
+        float k = 1 - d / w.r, nx = dx / d, ny = dy / d, damp = 1 - 1.3f * k * dt;
+        c.vx = c.vx * damp + (-nx * 200 - ny * 170) * k * dt; c.vy = c.vy * damp + (-ny * 200 + nx * 170) * k * dt;
+        c.a += 3.2f * k * dt;
+        if ((frameNo % 5) == 0) addPart(c.x - nx * 3, c.y - ny * 3, -ny * 30, nx * 30, 0.4f, C_WHITE);
     }
     for (Warp& w : warps) {
         float ca = cosf(w.aa), sa = sinf(w.aa), dx = c.x - w.ax, dy = c.y - w.ay;
