@@ -10,7 +10,7 @@ static const float DECK_H = 10, JUMP_H = 7, RAMP_LEN = 15;
 struct Light { int x, y, r, amt; };
 
 const TrackDef* def = nullptr;
-int theme = 0, weather = 0, levelNo = 0;
+int theme = 0, weather = 0, levelNo = 0, style = 0, vehicle = VH_CAR, liquid = LQ_WATER;
 bool night = false, flood = false;
 float windX = 0, windY = 0, gust = 1;
 std::vector<Sample> sm;
@@ -19,7 +19,8 @@ float trackLen = 1, spacing = 0.25f;
 uint8_t surf[2][N], solid[2][N], israil[2][N], water0[N], reserved[N], objMask[N], dynSolid[N], ttMask[N], spanMask[N], shadowM[N];
 float ht[2][N], latm[2][N], castH[N];
 int idxm[2][N], nearIdx[N];
-static uint16_t distRoad[N];
+uint16_t distRoad[N];
+uint8_t netMask[N], landM[N];
 uint32_t ground[N], overC[N];
 uint8_t overA[N], lightStatic[N], lightBuf[N];
 float overH[N];
@@ -44,17 +45,17 @@ uint32_t hue(int v) {             // 0..255 -> rainbow
     switch (i % 6) { case 0: return RGB(255, t, 0); case 1: return RGB(q, 255, 0); case 2: return RGB(0, 255, t); case 3: return RGB(0, q, 255); case 4: return RGB(t, 0, 255); default: return RGB(255, 0, q); }
 }
 
-static inline void gpx(int x, int y, uint32_t c) { if (inb(x, y) && y >= HUD_H) ground[y * W + x] = c; }
-static inline void opx(int x, int y, uint32_t c, float h) { if (inb(x, y) && y >= HUD_H) { int p = y * W + x; overC[p] = c; overA[p] = 1; overH[p] = h; } }
-static void markSolid(int x, int y, int w, int h, uint8_t s, float cast) {
+void gpx(int x, int y, uint32_t c) { if (inb(x, y) && y >= HUD_H) ground[y * W + x] = c; }
+void opx(int x, int y, uint32_t c, float h) { if (inb(x, y) && y >= HUD_H) { int p = y * W + x; overC[p] = c; overA[p] = 1; overH[p] = h; } }
+void markSolid(int x, int y, int w, int h, uint8_t s, float cast) {
     for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) { int p = j * W + i; solid[0][p] = s; castH[p] = std::max(castH[p], cast); objMask[p] = 1; }
 }
-static void markObj(int x, int y, int w, int h) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) objMask[j * W + i] = 1; }
-static void markReserved(int x, int y, int w, int h) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) reserved[j * W + i] = 1; }
+void markObj(int x, int y, int w, int h) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) objMask[j * W + i] = 1; }
+void markReserved(int x, int y, int w, int h) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (inb(i, j)) reserved[j * W + i] = 1; }
 // Draws a small picture given as rows of characters; keys[i] is drawn in cols[i], '.' is transparent.
 // With tall >= 0 the picture is drawn above the cars instead (they can drive behind it); a tall above 0
 // also makes every pixel of it cast a shadow of that height (0: the shadow comes from its solid foot only).
-static void sprite(int x, int y, const char* const* rows, int h, const char* keys, const uint32_t* cols, float tall = -1) {
+void sprite(int x, int y, const char* const* rows, int h, const char* keys, const uint32_t* cols, float tall) {
     for (int j = 0; j < h; j++) for (int i = 0; rows[j][i]; i++) {
         const char* k = strchr(keys, rows[j][i]);
         if (rows[j][i] == '.' || !k) continue;
@@ -64,15 +65,17 @@ static void sprite(int x, int y, const char* const* rows, int h, const char* key
 }
 
 static void stampBlob(float cx, float cy, float rx, float ry, int seed, int mode) {
-    // mode 0: water, -1: land (islands on flooded tracks), otherwise a road patch of that surface type
+    // mode 0: water, -1: land (islands on flooded tracks), -2: land in the water world, otherwise a road patch of that surface type
     for (int y = (int)(cy - ry * 1.3f); y <= (int)(cy + ry * 1.3f); y++)
         for (int x = (int)(cx - rx * 1.3f); x <= (int)(cx + rx * 1.3f); x++) {
             if (!inb(x, y) || y < HUD_H) continue;
             float dx = (x - cx) / rx, dy = (y - cy) / ry, th = atan2f(dy, dx);
             float rr = 1 + 0.10f * sinf(3 * th + seed) + 0.06f * sinf(7 * th + seed * 2.3f);
+            if (theme == TH_SPORT && mode == 0) rr = 1;       // the pockets of the billiard table are round
             if (dx * dx + dy * dy > rr * rr) continue;
             int p = y * W + x;
             if (mode == 0) surf[0][p] = S_WATER;
+            else if (mode == -2) landM[p] = 1;
             else if (mode == -1) surf[0][p] = S_OFF;
             else if (surf[0][p] == S_ROAD || surf[0][p] == S_DIRT) surf[0][p] = (uint8_t)mode;
         }
@@ -104,6 +107,7 @@ static void buildSamples() {
             s.x = 0.5f * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
             s.y = 0.5f * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
             s.w = lerpf(p1.w, p2.w, st); s.h = lerpf(p1.h, p2.h, st); s.f = p1.f;
+            if (s.f & fW) s.f |= fG;
             s.type = (p1.f & fD) ? S_DIRT : (p1.f & fI) ? S_ICE : S_ROAD;
             sm.push_back(s);
         }
@@ -220,6 +224,7 @@ static void bfsNearest() {
 
 // ------------------------------------------------------------------ ground art
 static uint32_t offColor(int x, int y, uint32_t hs) {
+    if (newWorld()) return worldOff(x, y, hs);
     const ThemeCol& T = THEMES[theme];
     int v = hs % 100;
     switch (theme) {
@@ -252,6 +257,7 @@ static uint32_t colorAt(int ly, int p) {
     int x = p % W, y = p / W;
     uint32_t hs = hash2(x, y, levelNo);
     const ThemeCol& T = THEMES[theme];
+    if (newWorld()) { uint32_t c; if (worldRoad(ly, p, c)) return c; }
     if (israil[ly][p]) {
         const Sample& S = sm[idxm[ly][p]];
         if (S.f & fT) return RGB(96, 96, 100);
@@ -305,7 +311,7 @@ static uint32_t colorAt(int ly, int p) {
 }
 
 // kind: 0 leafy, 1 pine, 2 pink blossom, 3 white blossom, 4 autumn, 5 bare/snowy, 6 dark leafy
-static void drawCanopy(int x, int y, int r, int kind) {
+void drawCanopy(int x, int y, int r, int kind) {
     uint32_t L, M, D, K;
     Rng rr(x * 131 + y * 17);
     switch (kind) {
@@ -354,7 +360,7 @@ static void drawCanopy(int x, int y, int r, int kind) {
         if (inb(x + dx, cy + dy)) castH[(cy + dy) * W + x + dx] = 5;
     }
 }
-static void drawPalm(int x, int y) {
+void drawPalm(int x, int y) {
     gpx(x, y, RGB(150, 100, 50)); gpx(x, y + 1, RGB(120, 76, 40)); gpx(x + 1, y + 1, RGB(90, 56, 30)); gpx(x + 1, y, RGB(120, 76, 40));
     markSolid(x, y, 2, 2, 2, 4);
     int cy = y - 5;
@@ -370,7 +376,7 @@ static void drawPalm(int x, int y) {
     opx(x, cy, RGB(170, 110, 40), 99); opx(x + 1, cy, RGB(130, 80, 30), 99);
 }
 
-static bool placeFree(int x, int y, int rx, int ry = -1) {
+bool placeFree(int x, int y, int rx, int ry) {
     if (ry < 0) ry = rx;
     for (int j = -ry; j <= ry; j++) for (int i = -rx; i <= rx; i++) {
         if (!inb(x + i, y + j) || y + j < HUD_H + 2) return false;
@@ -379,7 +385,7 @@ static bool placeFree(int x, int y, int rx, int ry = -1) {
     }
     return true;
 }
-static void addLeafTree(int x, int y, Rng& rng, int kind) {
+void addLeafTree(int x, int y, Rng& rng, int kind) {
     int r = kind == 1 ? 5 : 5 + rng.range(2);
     static const uint32_t tr[3] = { RGB(134, 84, 44), RGB(104, 64, 34), RGB(72, 44, 24) };
     gpx(x - 1, y, tr[0]); gpx(x, y, tr[1]); gpx(x + 1, y, tr[2]); gpx(x - 1, y + 1, tr[1]); gpx(x, y + 1, tr[1]); gpx(x + 1, y + 1, tr[2]);
@@ -393,6 +399,7 @@ static void addLeafTree(int x, int y, Rng& rng, int kind) {
     if (kind == 4 || kind == 0 || kind == 6) treeTops.push_back({ x, y - 4, r, kind });
     markReserved(x - 6, y - 10, 13, 14);
 }
+void addLight(int x, int y, int r, int amt) { lights.push_back({ x, y, r, amt }); }
 static void addLamp(int x, int y) {
     gpx(x, y, RGB(40, 40, 44)); for (int j = 1; j <= 4; j++) gpx(x, y - j, RGB(120, 120, 128));
     gpx(x - 1, y - 5, RGB(255, 244, 170)); gpx(x, y - 5, C_WHITE); gpx(x + 1, y - 5, RGB(255, 244, 170)); gpx(x, y - 6, RGB(90, 90, 96));
@@ -422,6 +429,7 @@ static void drawBuilding(int x, int y, int w, int h, Rng& rng) {
     lights.push_back({ x + w / 2, y + h, 12, 70 });
 }
 static void drawHouse(int x, int y, Rng& rng) {
+    if (newWorld() && worldHouse(x, y, rng)) return;
     if (theme == TH_CITY) { drawBuilding(x, y, 18, 16, rng); return; }
     uint32_t r1 = RGB(226, 100, 66), r2 = RGB(186, 58, 42), ridge = RGB(250, 176, 136), wall = RGB(240, 232, 216), door = RGB(120, 72, 40), win = night ? RGB(255, 230, 130) : RGB(88, 152, 224);
     if (theme == TH_WINTER) { r1 = RGB(244, 247, 252); r2 = RGB(214, 224, 240); ridge = C_WHITE; }
@@ -459,6 +467,7 @@ static void drawHouse(int x, int y, Rng& rng) {
 
 // one piece of automatic scenery, depending on the theme
 static bool addScenery(int x, int y, Rng& rng) {
+    if (newWorld()) return worldScenery(x, y, rng);
     int k = rng.range(20);
     auto leaf = [&](int kind) { if (!placeFree(x, y, 5)) return false; addLeafTree(x, y, rng, kind); return true; };
     switch (theme) {
@@ -599,6 +608,7 @@ static void placeObjects(Rng& rng) {
     }
     for (const Obj& o : def->o) {
         int x = (int)o.a, y = (int)o.b;
+        if (newWorld() && worldObject(o, rng)) continue;
         switch (o.t) {
         case O_STAND: {
             int w = (int)o.c, h = (int)o.d;
@@ -664,7 +674,7 @@ static void placeObjects(Rng& rng) {
         }
     }
     // lakes get ducks
-    for (const Obj& o : def->o) if (o.t == O_LAKE && theme != TH_WINTER && theme != TH_MEXICO && o.c > 14) {
+    for (const Obj& o : def->o) if (o.t == O_LAKE && theme != TH_WINTER && theme != TH_MEXICO && o.c > 14 && liquid <= LQ_COLD) {
         ducks.push_back({ o.a - o.c * 0.3f, o.b, std::min(o.c, o.d) * 0.3f, rng.f() * 6 });
         ducks.push_back({ o.a + o.c * 0.3f, o.b, std::min(o.c, o.d) * 0.25f, rng.f() * 6 });
     }
@@ -675,7 +685,7 @@ static void placeObjects(Rng& rng) {
         if (distRoad[y * W + x] < 12) continue;
         bool nearWater = false;
         for (int j = -6; j <= 6 && !nearWater; j += 3) for (int i = -6; i <= 6; i += 3) if (inb(x + i, y + j) && water0[(y + j) * W + x + i]) nearWater = true;
-        if (nearWater) continue;
+        if (nearWater && theme != TH_WATER) continue;
         if (addScenery(x, y, rng)) placed++;
     }
     // Mexico: wind ripples in the sand
@@ -698,6 +708,7 @@ static void placeObjects(Rng& rng) {
         else { for (int j = 0; j < 3 + rng.range(2); j++) gpx(x, y - j, j == 0 ? RGB(60, 84, 40) : RGB(150, 170, 80)); gpx(x, y - 4, RGB(110, 70, 40)); }
     }
     // small ground details
+    if (newWorld()) { worldDetails(rng); return; }
     for (int i = 0; i < 280; i++) {
         int x = 3 + rng.range(W - 6), y = HUD_H + 3 + rng.range(H - HUD_H - 6);
         if (distRoad[y * W + x] < 4 || !placeFree(x, y, 1)) continue;
@@ -744,6 +755,7 @@ static void buildTrains() {
             for (int d = -4; d <= 4; d++) {
                 int xx = t.horiz ? x : x + d, yy = t.horiz ? y + d : y;
                 if (!inb(xx, yy)) continue;
+                if (theme == TH_WATER) continue;          // ships need no rails
                 bool rail = (d == -3 || d == 3);
                 if (rail) gpx(xx, yy, (a & 1) ? RGB(214, 214, 220) : RGB(180, 180, 190));
                 else if (!rd && a % 4 == 0) gpx(xx, yy, RGB(120, 76, 40));
@@ -831,13 +843,14 @@ static void renderGround() {
         for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) { uint8_t s = surf[0][p + j * W + i]; if (s == S_WATER || s == S_SHALLOW || s == S_PLANK || s == S_METAL) nw++; }
         uint32_t hs = hash2(x, y, levelNo + 9);
         if (w && nw < 9) ground[p] = waterCol(1);
-        else if (w && (surf[0][p - W] == S_PLANK || surf[0][p - 2 * W] == S_PLANK) && (x % 7) < 2) ground[p] = RGB(52, 36, 22);       // stilts
-        else if (surf[0][p] == S_OFF && nw > 0) ground[p] = T.shore;
+        else if (w && (surf[0][p - W] == S_PLANK || surf[0][p - 2 * W] == S_PLANK) && (x % 7) < 2 && liquid != LQ_SPACE) ground[p] = RGB(52, 36, 22);       // stilts
+        else if (surf[0][p] == S_OFF && nw > 0) ground[p] = (theme == TH_SPORT && style == 0) ? RGB(70, 44, 26) : T.shore;
         else if (surf[0][p] == S_OFF && distRoad[p] >= 1 && distRoad[p] <= 6 && surf[1][p] == S_NONE) {
             // verge: the ground changes towards the road edge
             int d = distRoad[p];
             bool dirt = sm[nearIdx[p]].type == S_DIRT;
-            if (dirt && d == 1 && (hs % 3) == 0) ground[p] = RGB(140, 70, 0);
+            if (newWorld()) worldVerge(p, d, hs);
+            else if (dirt && d == 1 && (hs % 3) == 0) ground[p] = RGB(140, 70, 0);
             else if (dirt && d == 2 && (hs % 6) == 0) ground[p] = RGB(176, 104, 24);
             else if (theme == TH_F1) ground[p] = d == 6 && (hs & 1) ? ground[p] : ((hs % 5) == 0 ? RGB(196, 176, 130) : ((hs % 7) == 0 ? RGB(236, 220, 176) : RGB(218, 200, 154)));   // gravel trap
             else if (theme == TH_CITY) ground[p] = d == 1 ? RGB(110, 110, 112) : (d <= 3 ? RGB(196, 196, 190) : ground[p]);          // kerbstone and pavement
@@ -848,6 +861,26 @@ static void renderGround() {
         } else if (surf[0][p] == S_DIRT && fabsf(latm[0][p]) > 0.9f && (hs % 3) == 0) {
             ground[p] = sandy() ? RGB(196, 152, 84) : shade(T.off, 0.74f);
         }
+    }
+    // a bottomless pit shows its walls below the upper edge; outer space has stars
+    if (liquid == LQ_VOID && theme != TH_SPORT) for (int y = HUD_H + 2; y < H - 1; y++) for (int x = 1; x < W - 1; x++) {
+        int p = y * W + x;
+        if (surf[0][p] != S_WATER) continue;
+        uint32_t wall = theme == TH_HORROR ? (style == 2 ? RGB(92, 62, 36) : RGB(118, 86, 72)) : RGB(112, 108, 120);
+        for (int k = 1; k <= 8 && y - k > HUD_H; k++) if (surf[0][p - k * W] != S_WATER) {
+            ground[p] = shade(wall, (1 - k * 0.105f) * (((x + (hash2(x / 3, 0, levelNo) & 3)) % 5) == 0 ? 0.8f : 1.0f) * ((hash2(x, y, 3) & 7) == 0 ? 1.15f : 1.0f)); break;
+        }
+        if (theme == TH_HORROR && style == 3) {      // something glows far down in the fault line
+            bool deep = true;
+            for (int k = 1; k <= 7 && deep; k++) if (surf[0][p - k * W] != S_WATER || surf[0][p + std::min(k, H - 1 - y) * W] != S_WATER || surf[0][p - std::min(k, x)] != S_WATER || surf[0][p + std::min(k, W - 1 - x)] != S_WATER) deep = false;
+            if (deep && ((x + y * 3) % 4) != 0) ground[p] = (hash2(x, y, 5) % 5) ? RGB(96, 22, 8) : RGB(170, 60, 10);
+        }
+    }
+    if (liquid == LQ_SPACE) for (int p = HUD_H * W; p < N; p++) if (surf[0][p] == S_WATER) {
+        uint32_t h = hash2(p % W, p / W, levelNo + 4);
+        float neb = sinf((p % W) * 0.031f + sinf((p / W) * 0.027f) * 2.1f) + sinf((p / W) * 0.043f + 1.3f);
+        ground[p] = neb > 1.2f ? RGB(26, 10, 44) : (neb < -1.3f ? RGB(8, 20, 44) : RGB(5, 5, 16));
+        if (h % 173 == 0) ground[p] = C_WHITE; else if (h % 97 == 0) ground[p] = RGB(120, 130, 190); else if (h % 211 == 0) ground[p] = RGB(255, 220, 150);
     }
     // turntable pits and the rail stubs leading to them
     for (const Turntable& t : turntables) for (int a = 0; a < 4; a++) {
@@ -868,6 +901,9 @@ static void finishGround() {
         if (objMask[p]) continue;
         for (int k = 1; k <= 8 && y - k >= HUD_H; k++) {
             float d = ht[0][p - k * W] - ht[0][p];
+            if (d >= 2 * k - 0.5f && theme == TH_CANDY) {       // the side of a cake: sponge and cream
+                ground[p] = (d < 2 * k + 1.5f) ? RGB(255, 250, 240) : ((k % 4) == 2 ? RGB(250, 236, 220) : ((hash2(x, y, 3) % 6) == 0 ? RGB(196, 146, 84) : RGB(232, 190, 116))); objMask[p] = 2; break;
+            }
             if (d >= 2 * k - 0.5f) { ground[p] = (d < 2 * k + 1.5f) ? RGB(176, 172, 168) : (((x / 2 + y) & 3) == 0 ? RGB(60, 58, 60) : RGB(104, 100, 100)); objMask[p] = 2; break; }
         }
     }
@@ -927,6 +963,14 @@ static void buildOverlay() {
             else if (fabsf(d) > half + 3.0f) c = lit ? RGB(220, 220, 224) : RGB(110, 110, 116);
             else if (fabsf(d) > half) c = lit ? RGB(160, 160, 166) : RGB(132, 132, 138);
             if (s.portal) c = fabsf(d) <= half ? RGB(10, 10, 14) : RGB(176, 176, 182);
+            if (theme == TH_SCIFI) {       // a glass tube: the cars show through it
+                if (fabsf(d) > half + 3.4f) continue;
+                bool rib = ((int)(s.arc / 9) != (int)((s.arc - 1.2f) / 9));
+                if (fabsf(d) <= half && !rib && !s.portal && ((x + y) & 1)) continue;
+                c = fabsf(d) > half ? (lit ? RGB(170, 236, 255) : RGB(40, 110, 170)) : (rib || s.portal ? RGB(0, 200, 240) : (fabsf(d) < half * 0.45f && lit ? RGB(190, 230, 255) : RGB(70, 120, 190)));
+                opx(x, y, c, 99); castH[y * W + x] = std::max(castH[y * W + x], 3.0f);
+                continue;
+            }
             opx(x, y, c, 99);
             castH[y * W + x] = std::max(castH[y * W + x], 6.0f);
         }
@@ -940,7 +984,7 @@ void buildItems() {
         int k = (int)((i + 0.5f) * NS / cnt);
         for (int tries = 0; tries < NS; tries++, k = (k + 37) % NS) {
             const Sample& s = sm[k];
-            bool bad = (s.f & (fG | fF | fT | fY)) || s.ramp > 0 || s.over || fabsf(s.h - sm[(k + 80) % NS].h) > 0.3f || s.type == S_BOOST || k * spacing < 36;
+            bool bad = (s.f & (fG | fF | fT | fY | fHOP)) || s.ramp > 0 || (s.over && !(flood && newWorld())) || fabsf(s.h - sm[(k + 80) % NS].h) > 0.3f || s.type == S_BOOST || k * spacing < 36;
             for (const Crossing& c : crossings) if (abs(c.k - k) < (int)(28 / spacing)) bad = true;
             for (int j = 1; j < 56 && !bad; j++) if (sm[(k - (int)(j / spacing) + NS) % NS].ramp > 0) bad = true; // not in a landing zone
             int px = (int)s.x, py = (int)s.y;
@@ -957,15 +1001,24 @@ void buildLevel(int n) {
     levelNo = n; def = &TRACKS[n]; theme = def->theme; weather = def->weather;
     Rng rng(n * 7919 + 101);
     wavers.clear(); flags.clear(); smokers.clear(); ducks.clear(); treeTops.clear(); waterPix.clear(); lamps.clear(); lights.clear(); leafCount = 0;
-    night = flood = false; windX = windY = 0; gust = 1;
-    for (const Obj& o : def->o) { if (o.t == O_NIGHT) night = true; if (o.t == O_FLOOD) flood = true; if (o.t == O_WIND) { windX = o.a; windY = o.b; } }
+    night = flood = false; windX = windY = 0; gust = 1; style = 0;
+    vehicle = theme == TH_SCIFI ? VH_HOVER : (theme == TH_WATER ? VH_BOAT : VH_CAR);
+    liquid = theme == TH_CANDY ? LQ_CHOC : (theme == TH_HORROR ? LQ_BLOOD : (theme == TH_SCIFI ? LQ_SPACE : LQ_WATER));
+    worldClear();
+    for (const Obj& o : def->o) { if (o.t == O_NIGHT) night = true; if (o.t == O_FLOOD) flood = true; if (o.t == O_WIND) { windX = o.a; windY = o.b; } if (o.t == O_STYLE) style = (int)o.a; }
+    for (const Obj& o : def->o) if (o.t == O_VOID) liquid = LQ_VOID;
+    if (theme == TH_HORROR && style == 1) liquid = LQ_SLIME;
     for (int p = 0; p < N; p++) {
         surf[0][p] = (flood && p >= HUD_H * W) ? S_WATER : S_OFF; surf[1][p] = S_NONE;
         for (int l = 0; l < 2; l++) { solid[l][p] = 0; israil[l][p] = 0; ht[l][p] = 0; latm[l][p] = 0; idxm[l][p] = 0; }
-        reserved[p] = 0; objMask[p] = 0; castH[p] = 0; overA[p] = 0; overH[p] = 0; overC[p] = 0;
+        reserved[p] = 0; objMask[p] = 0; castH[p] = 0; overA[p] = 0; overH[p] = 0; overC[p] = 0; netMask[p] = 0; landM[p] = 0;
     }
     int seed = n * 13;
-    for (const Obj& o : def->o) if (o.t == O_ISLAND) stampBlob(o.a, o.b, o.c, o.d, seed++, -1);
+    for (const Obj& o : def->o) if (o.t == O_ISLAND) stampBlob(o.a, o.b, o.c, o.d, seed++, theme == TH_WATER ? -2 : -1);
+    for (const Obj& o : def->o) {       // harbour quays (2) and piers (3)
+        if (o.t == O_QUAY) for (int y = (int)o.b; y < (int)(o.b + o.d); y++) for (int x = (int)o.a; x < (int)(o.a + o.c); x++) if (inb(x, y) && y >= HUD_H) landM[y * W + x] = 2;
+        if (o.t == O_PIER) for (int y = (int)std::min(o.b, o.d) - 3; y <= (int)std::max(o.b, o.d) + 3; y++) for (int x = (int)std::min(o.a, o.c) - 3; x <= (int)std::max(o.a, o.c) + 3; x++) if (inb(x, y) && y >= HUD_H) landM[y * W + x] = 3;
+    }
     for (const Obj& o : def->o) {
         if (o.t == O_LAKE) stampBlob(o.a, o.b, o.c, o.d, seed++, 0);
         if (o.t == O_RIVER) stampRiver(o.a, o.b, o.c, o.d, o.e, seed++);
@@ -977,22 +1030,33 @@ void buildLevel(int n) {
         if (o.t == O_ICE) stampBlob(o.a, o.b, o.c, o.d, seed++, S_ICE);
         if (o.t == O_DIRT) stampBlob(o.a, o.b, o.c, o.d, seed++, S_DIRT);
         if (o.t == O_PUDDLE) stampBlob(o.a, o.b, o.c, o.d, seed++, S_PUDDLE);
+        if (o.t == O_SLIME) stampBlob(o.a, o.b, o.c, o.d, seed++, S_SLIME);
         if (o.t == O_BOOST)
             for (int y = (int)(o.b - o.c); y <= (int)(o.b + o.c); y++) for (int x = (int)(o.a - o.c); x <= (int)(o.a + o.c); x++)
                 if (inb(x, y) && (x - o.a) * (x - o.a) + (y - o.b) * (y - o.b) <= o.c * o.c + 1 && roadLike(surf[0][y * W + x]) && surf[0][y * W + x] != S_PLANK) surf[0][y * W + x] = S_BOOST;
     }
+    if (theme == TH_WATER) for (int p = HUD_H * W; p < N; p++) {       // dry land is a wall for the boats
+        if (landM[p] && surf[0][p] == S_OFF) { solid[0][p] = 2; objMask[p] = 1; if (landM[p] > 1) castH[p] = landM[p] == 2 ? 4.0f : 3.0f; } else landM[p] = 0;
+    }
     bfsNearest();
     buildMechanics();
+    worldBuildEarly();
     renderGround();
     buildTrains();
     buildOverlay();
     placeObjects(rng);
+    if (newWorld()) { Rng wr(n * 31 + 7); worldBuild(wr); }
     finishGround();
+    if (newWorld()) worldBuildLate();
     buildItems();
-    for (int p = 0; p < N; p++) if (surf[0][p] == S_WATER || surf[0][p] == S_SHALLOW) waterPix.push_back(p);
+    for (int p = 0; p < N; p++) if ((surf[0][p] == S_WATER && !bottomless()) || surf[0][p] == S_SHALLOW) waterPix.push_back(p);
+    if (newWorld()) for (int p = HUD_H * W; p < N; p++) {
+        if (theme == TH_WATER && !solid[0][p] && !objMask[p] && surf[1][p] == S_NONE && (surf[0][p] == S_OFF || surf[0][p] == S_ROAD) && !(surf[0][p] == S_ROAD && sm[idxm[0][p]].ramp > 0)) seaPix.push_back(p);
+        if (surf[0][p] == S_BOOST) { const Sample& S = sm[idxm[0][p]]; boostPix.push_back(p); boostVal.push_back((uint8_t)(((int)(S.arc * 2 - fabsf(latm[0][p]) * S.w * 0.9f) % 12 + 12) % 12)); }
+    }
     // static light map for night tracks
     if (night) {
-        for (int p = 0; p < N; p++) lightStatic[p] = 72;
+        for (int p = 0; p < N; p++) lightStatic[p] = theme == TH_HORROR ? 104 : 72;      // a little moonlight in the horror world
         for (const Light& l : lights)
             for (int y = l.y - l.r; y <= l.y + l.r; y++) for (int x = l.x - l.r; x <= l.x + l.r; x++) {
                 if (!inb(x, y)) continue;

@@ -38,5 +38,11 @@ void menu();
 void join();
 void boost(float x = -1);
 void rustle(float x = -1);
+void squish(float x = -1);
+void boing(float x = -1);
+void warp(float x = -1);
+void thunder();
+void fallAway(float x = -1);
+void clack(float x = -1);
 
 } // namespace snd

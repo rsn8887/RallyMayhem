@@ -68,7 +68,8 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_executable(rallymayhem
-  src/main.cpp src/game.cpp src/cars.cpp src/level.cpp src/draw.cpp src/gfx.cpp src/synth.cpp src/tracks.cpp)
+  src/main.cpp src/game.cpp src/cars.cpp src/level.cpp src/draw.cpp src/gfx.cpp src/synth.cpp src/tracks.cpp
+  src/worlds.cpp)
 target_include_directories(rallymayhem PRIVATE src)
 
 if(PLATFORM_UC STREQUAL "SWITCH")

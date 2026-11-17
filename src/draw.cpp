@@ -9,13 +9,24 @@ static inline uint32_t mixc(uint32_t a, uint32_t b, float t) {
     return RGB(r, g, bl);
 }
 static void drawCar(const Car& c) {
-    if (c.dead > 0) return;
+    if (c.dead > 0) {
+        if (c.fall <= 0) return;
+        // falling into a pit: the car turns over and gets smaller and darker
+        float f = c.fall, a = c.a + (1 - f) * 5, cs = cosf(a), sn = sinf(a);
+        for (int py = (int)c.y - 6; py <= (int)c.y + 6; py++) for (int px = (int)c.x - 6; px <= (int)c.x + 6; px++) {
+            float wx = px + 0.5f - c.x, wy = py + 0.5f - c.y, lx = wx * cs + wy * sn, ly = -wx * sn + wy * cs;
+            if (fabsf(lx) <= CAR_HL * f && fabsf(ly) <= CAR_HW * f && py >= HUD_H) pset(px, py, shade(fabsf(ly) < CAR_HW * f * 0.5f ? mixc(CAR_COL[c.slot], C_WHITE, 0.3f) : CAR_COL[c.slot], f * 0.9f));
+        }
+        return;
+    }
     if (c.invuln > 0 && (frameNo & 4)) return;
     uint32_t body = CAR_COL[c.slot], dark = shade(body, 0.5f), side = shade(body, 0.78f), roof = mixc(body, C_WHITE, 0.45f), roofHi = mixc(body, C_WHITE, 0.75f);
     float cs = cosf(c.a), sn = sinf(c.a), zv = c.z - c.gvis;
+    if (vehicle == VH_HOVER) zv += 3.0f + sinf(frameNo * 0.13f + c.slot * 1.7f) * 0.6f;       // hovercraft float a few pixels up
     // shadow (the pixel exact collision footprint, shifted)
     int m[96][2], n = carMask(c.x, c.y, c.a, m), so = 1 + (int)(zv * 0.6f);
-    for (int i = 0; i < n; i++) pdark(m[i][0] + so, m[i][1] + 1 + (int)(zv * 0.2f), 0.55f);
+    if (vehicle == VH_HOVER) for (int i = 0; i < n; i++) { int q = pixAt((float)m[i][0], (float)m[i][1]); if (m[i][1] >= HUD_H && ((m[i][0] + m[i][1] + (frameNo >> 2)) & 1)) fb[q] = mixc(fb[q], RGB(60, 220, 255), 0.4f); }      // the anti-gravity field lights the ground
+    if (vehicle != VH_BOAT || zv > 1.5f) for (int i = 0; i < n; i++) pdark(m[i][0] + so, m[i][1] + 1 + (int)(zv * 0.2f), 0.55f);
     int cx = (int)floorf(c.x), cy = (int)floorf(c.y - zv);
     for (int py = cy - 11; py <= cy + 8; py++) for (int px = cx - 8; px <= cx + 8; px++) {
         for (int L = 2; L >= 0; L--) {
@@ -26,6 +37,38 @@ static void drawCar(const Car& c) {
             int ix = (int)floorf(lx + CAR_HL), iy = (int)floorf(ly + CAR_HW);
             if (ix < 0 || ix > 8 || iy < 0 || iy > 4) continue;
             uint32_t col = 0;
+            if (vehicle != VH_CAR) {
+                if (vehicle == VH_HOVER) {
+                    // an anti-gravity racer: a needle nose, swept wings, two engine pods at the back
+                    static const char* hull[5] = { "eww......", "ebbbbw...", ".sbbccbbn", "ebbbbw...", "eww......" };
+                    char ch = hull[iy][ix];
+                    if (ch == '.') continue;
+                    bool flick = (frameNo + c.slot) & 2;
+                    if (L == 0) col = ch == 'e' ? (flick ? RGB(200, 255, 255) : RGB(60, 170, 255)) : RGB(14, 18, 34);       // the glowing underside
+                    else if (L == 1) {
+                        if (ch == 'e') col = flick ? RGB(120, 240, 255) : C_WHITE;
+                        else if (ch == 'w') col = mixc(body, C_WHITE, 0.65f);
+                        else if (ch == 'n') col = C_WHITE;
+                        else if (ch == 's') col = dark;
+                        else if (ch == 'c') col = ix == 5 ? RGB(150, 240, 255) : RGB(30, 90, 170);
+                        else col = iy == 2 ? body : (iy < 2 ? mixc(body, C_WHITE, 0.2f) : side);
+                    } else {
+                        if (ch == 'c') col = ix == 5 ? RGB(220, 250, 255) : RGB(80, 170, 230);          // canopy
+                        else if (ch == 'e' || (ch == 'w' && ix == 1)) col = iy < 2 ? mixc(body, C_WHITE, 0.4f) : dark;     // tail fins
+                        else continue;
+                    }
+                } else {
+                    if ((ix == 8 && iy != 2) || (ix == 7 && (iy == 0 || iy == 4))) continue;       // pointed bow
+                    if (L == 2) { if (ix < 2 || ix > 4 || iy < 1 || iy > 3) continue; col = ix == 4 ? RGB(150, 204, 244) : (iy == 1 ? roofHi : roof); }
+                    else if (L == 1) {
+                        if (ix == 0) col = iy == 2 ? RGB(36, 36, 44) : RGB(236, 236, 240);
+                        else if (iy == 0 || iy == 4 || ix >= 7) col = RGB(244, 244, 248);
+                        else col = ix == 6 ? side : body;
+                    } else col = RGB(190, 196, 210);
+                }
+                pset(px, py, col);
+                break;
+            }
             if (L == 0) col = ((ix == 1 || ix == 2 || ix == 6 || ix == 7) && (iy == 0 || iy == 4)) ? RGB(16, 16, 18) : dark;
             else if (L == 1) {
                 if (ix == 8) col = (iy == 0 || iy == 4) ? RGB(255, 244, 170) : side;
@@ -87,16 +130,17 @@ void stepAmbient(float dt) {
         if (p.life <= 0) { parts[i] = parts.back(); parts.pop_back(); } else i++;
     }
     // weather
-    size_t want = weather == WX_RAIN ? 130 : (weather == WX_SNOW ? 110 : (weather == WX_CONFETTI ? 90 : 0));
+    size_t want = raining() ? 130 : (weather == WX_SNOW ? 110 : (weather == WX_CONFETTI ? 90 : 0));
     while (drops.size() < want) drops.push_back({ grng.f() * W, grng.f() * H, 0.6f + grng.f() * 0.6f });
     if (drops.size() > want) drops.resize(want);
     for (Drop& d : drops) {
-        if (weather == WX_RAIN) { d.x -= 70 * dt * d.sp; d.y += 260 * dt * d.sp; }
+        if (raining()) { d.x -= 70 * dt * d.sp; d.y += 260 * dt * d.sp; }
         else { d.x += sinf(d.y * 0.08f + d.sp * 9) * 14 * dt - 5 * dt; d.y += (weather == WX_CONFETTI ? 34 : 26) * dt * d.sp; }
         if (d.y >= H) { d.y = HUD_H; d.x = grng.f() * (W + 60); }
         if (d.x < 0) d.x += W;
     }
-    snd::rainTarget = ((weather == WX_RAIN || windX != 0 || windY != 0) && !attract) ? 0.05f : 0;
+    snd::rainTarget = ((raining() || windX != 0 || windY != 0) && !attract) ? 0.05f : 0;
+    if (newWorld()) worldAmbient(dt);
     // wind streaks
     want = (windX != 0 || windY != 0) ? 26 : 0;
     while (streaks.size() < want) streaks.push_back({ grng.f() * W, HUD_H + grng.f() * (H - HUD_H), 0.6f + grng.f() * 0.8f });
@@ -187,6 +231,9 @@ static void applyNight() {
     for (const Train& tr : trains) if (tr.active) { float hx = tr.horiz ? tr.head : tr.line, hy = tr.horiz ? tr.line : tr.head; addBeam(hx, hy, tr.horiz ? (tr.dir > 0 ? 0 : PI) : (tr.dir > 0 ? PI / 2 : -PI / 2), 70); addGlow(hx, hy, 14, 120); }
     for (const ItemBox& it : items) if (it.timer <= 0) addGlow(it.x, it.y, 9, 110);
     for (const Proj& pr : projs) addGlow(pr.x, pr.y, 10, 160);
+    for (const Critter& z : critters) if (z.dead <= 0) addGlow(z.x, z.y - 3, 7, 130);
+    for (const Roller& r : rollers) if (r.wait <= 0) addGlow(r.x, r.y, 12, 150);
+    for (const Bumper& b : bumpers) addGlow(b.x, b.y, (int)b.r + 6, 120);
     for (size_t i = 0; i < signals.size(); i++) if (trains[signalTrain[i]].warn && ((frameNo >> 3) & 1)) addGlow((float)signals[i].x, (float)signals[i].y, 8, 150);
     for (const Particle& p : parts) if (((p.col >> 16) & 255) > 230 && (p.col & 255) < 120) { int q = pixAt(p.x, p.y); lightBuf[q] = 255; }
     for (int p = HUD_H * W; p < N; p++) {
@@ -207,6 +254,7 @@ void drawWorld() {
         int t = frameNo * 2;
         for (size_t i = 0; i < tripPix.size(); i++) { int p = tripPix[i]; uint32_t c = lut[(tripVal[i] * 2 + t) & 255]; fb[p] = shadowM[p] ? shade(c, 0.6f) : c; }
     }
+    if (newWorld()) worldDrawLow(0);
     // water shimmer
     int t = frameNo >> 3;
     uint32_t wl = waterCol(1), wg = waterCol(2);
@@ -297,6 +345,7 @@ void drawWorld() {
                 pset(x, y, c);
             }
     }
+    if (newWorld()) worldDrawLow(1);
     // pick-ups and mines
     for (const ItemBox& it : items) if (it.timer <= 0) drawIcon((int)it.x - 4, (int)it.y - 4, it.type, true);
     for (const Mine& m : mines) {
@@ -325,13 +374,22 @@ void drawWorld() {
             uint32_t body = j == 0 ? RGB(210, 40, 40) : wc[(j + levelNo) & 3];
             for (int al = lo; al <= hi; al++) for (int ac = -hw; ac <= hw; ac++) {
                 int x = tr.horiz ? al : ln + ac, y = tr.horiz ? ln + ac : al;
-                if (y >= HUD_H) pdark(x + 2, y + 3, 0.55f);
+                if (theme == TH_WATER) { if (y >= HUD_H && abs(ac) == hw && ((al + frameNo / 4) % 3) == 0) pset(x, y + (ac < 0 ? -1 : 1), RGB(214, 236, 250)); }      // ships: foam, no shadow
+                else if (y >= HUD_H) pdark(x + 2, y + 3, 0.55f);
             }
             for (int al = lo; al <= hi; al++) for (int ac = -hw; ac <= hw; ac++) {
                 int x = tr.horiz ? al : ln + ac, y = tr.horiz ? ln + ac : al;
                 if (y < HUD_H) continue;
                 uint32_t c = body;
                 int fr = tr.dir > 0 ? hi - al : al - lo;
+                if (theme == TH_WATER) {        // a tug boat pulling barges
+                    if (j == 0 && fr < 4 && abs(ac) > fr) continue;
+                    if (al == lo || al == hi || ac == -hw || ac == hw || (j == 0 && fr < 4 && abs(ac) == fr)) c = RGB(236, 238, 244);
+                    else if (j == 0) c = fr > 7 && fr < 14 ? (abs(ac) < 2 ? RGB(60, 90, 140) : C_WHITE) : (fr >= 14 ? RGB(40, 40, 48) : body);
+                    else c = ((al - lo) / 6 + abs(ac) / 2) & 1 ? wc[(j + al / 6) & 3] : shade(wc[(j + al / 6 + 1) & 3], 0.8f);
+                    pset(x, y, c);
+                    continue;
+                }
                 if (al == lo || al == hi || ac == -hw || ac == hw) c = RGB(24, 24, 28);
                 else if (ac == -hw + 1) c = mixc(body, C_WHITE, 0.35f);
                 else if (ac == hw - 1) c = shade(body, 0.7f);
@@ -355,12 +413,14 @@ void drawWorld() {
     for (const Particle& p : parts) pset((int)p.x, (int)p.y, p.col);
     for (const Leaf& l : leaves) pset((int)l.x, (int)l.y, l.col);
     if (birdX > -40) { int x = (int)birdX, y = (int)birdY, fl = (frameNo >> 3) & 1; pdark(x + 6, y + 12, 0.6f); pdark(x + 7, y + 12, 0.6f); for (int k = -3; k <= 3; k++) pset(x + k, y - (fl ? abs(k) : -abs(k)) / 2, RGB(20, 20, 24)); }
+    if (newWorld()) worldDrawHigh();
     if (night) applyNight();
+    if (flashT > 0 && newWorld()) { float k = flashT > 0.24f ? 0.6f : (flashT > 0.16f ? 0.15f : (flashT > 0.08f ? 0.42f : flashT * 4)); for (int p = HUD_H * W; p < N; p++) fb[p] = mixc(fb[p], RGB(236, 240, 255), k); }
     for (size_t i = 0; i < drops.size(); i++) {
         const Drop& d = drops[i];
         int x = (int)d.x, y = (int)d.y;
         if (y < HUD_H) continue;
-        if (weather == WX_RAIN) { pset(x, y, RGB(190, 220, 255)); pset(x + 1, y - 2, RGB(130, 160, 230)); pset(x, y - 1, RGB(130, 160, 230)); }
+        if (raining()) { pset(x, y, RGB(190, 220, 255)); pset(x + 1, y - 2, RGB(130, 160, 230)); pset(x, y - 1, RGB(130, 160, 230)); }
         else if (weather == WX_CONFETTI) { uint32_t c = hue((int)i * 37); pset(x, y, c); if (((frameNo >> 2) + i) & 1) pset(x + 1, y, c); else pset(x, y + 1, c); }
         else { pset(x, y, C_WHITE); if (d.sp > 1.0f) pset(x + 1, y, RGB(220, 230, 250)); }
     }

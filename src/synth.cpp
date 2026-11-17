@@ -166,5 +166,11 @@ void menu()             { playUi(660, 0.05f); }
 void join()             { playUi(523, 0.08f); playUi(784, 0.14f, 0.07f); }
 void boost(float x)            { at(x); play(SAW, 300, 3.0f, 0.12f, 0.3f); }
 void rustle(float x)           { at(x); play(NOISE, 3000, 0.4f, 0.10f, 0.14f); play(NOISE, 900, 0.6f, 0.06f, 0.1f); }
+void squish(float x)           { at(x); play(NOISE, 1400, 0.25f, 0.2f, 0.12f); play(SINE, 260, 0.3f, 0.18f, 0.14f); }
+void boing(float x)            { at(x); play(SINE, 180, 3.2f, 0.26f, 0.22f); play(TRI, 360, 2.4f, 0.12f, 0.18f, 0.02f); }
+void warp(float x)             { at(x); play(SINE, 300, 9.0f, 0.2f, 0.3f); play(SQ, 1500, 0.2f, 0.07f, 0.3f, 0.04f, 0.25f); }
+void thunder()          { at(-1); play(NOISE, 900, 0.25f, 0.5f, 1.6f, 0.25f); play(NOISE, 260, 0.6f, 0.4f, 2.2f, 0.3f); play(SINE, 70, 0.6f, 0.4f, 1.2f, 0.25f); }
+void fallAway(float x)         { at(x); play(SQ, 900, 0.08f, 0.14f, 0.9f, 0, 0.3f); }
+void clack(float x)            { at(x); play(SQ, 700, 0.5f, 0.12f, 0.04f); play(NOISE, 4000, 0.4f, 0.14f, 0.07f); }
 
 } // namespace snd

@@ -91,7 +91,7 @@ void drawText(const PFont& f, int x, int y, const char* s, uint32_t col, bool sh
 void drawTextC(const PFont& f, int cx, int y, const char* s, uint32_t col);
 
 // ------------------------------------------------------------------ track data
-enum { S_NONE, S_OFF, S_ROAD, S_DIRT, S_ICE, S_WATER, S_SHALLOW, S_PUDDLE, S_BOOST, S_PLANK, S_METAL };
+enum { S_NONE, S_OFF, S_ROAD, S_DIRT, S_ICE, S_WATER, S_SHALLOW, S_PUDDLE, S_BOOST, S_PLANK, S_METAL, S_SLIME };
 static inline bool roadLike(uint8_t s) { return s >= S_ROAD && s != S_WATER; }
 static const float CAR_HL = 4.5f, CAR_HW = 2.5f;                 // half length / width of a car (9x5 pixels)
 const float SLOPE_PULL = 70;        // extra slow-down uphill / speed-up downhill (0 = plain gravity only)
@@ -116,6 +116,15 @@ struct Ferry {                          // a raft shuttling between two docks ac
 };
 extern const TrackDef* def;
 extern int theme, weather, levelNo;
+extern int style;       // which look of the theme (O_STYLE)
+extern int vehicle;     // what everybody drives on this track
+enum { VH_CAR, VH_HOVER, VH_BOAT };
+extern int liquid;      // what lakes and rivers are filled with
+enum { LQ_WATER, LQ_SWAMP, LQ_COLD, LQ_CHOC, LQ_BLOOD, LQ_SLIME, LQ_VOID, LQ_SPACE, LQ_COUNT };
+static inline bool bottomless() { return liquid == LQ_VOID || liquid == LQ_SPACE; }
+static inline bool newWorld() { return theme >= TH_SCIFI; }
+static inline bool raining() { return weather == WX_RAIN || weather == WX_STORM; }
+static const int fHOP = 1 << 20;   // internal sample flag: a net crosses the road here (cars must be in the air)
 extern bool night, flood;
 extern float windX, windY, gust;
 extern std::vector<Sample> sm;
@@ -124,6 +133,8 @@ extern float trackLen, spacing;
 extern uint8_t surf[2][N], solid[2][N], israil[2][N], water0[N], reserved[N], objMask[N], dynSolid[N], ttMask[N], spanMask[N], shadowM[N];
 extern float ht[2][N], latm[2][N], castH[N];
 extern int idxm[2][N], nearIdx[N];
+extern uint16_t distRoad[N];
+extern uint8_t netMask[N], landM[N];
 extern uint32_t ground[N], overC[N];
 extern uint8_t overA[N], lightStatic[N], lightBuf[N];
 extern float overH[N];
@@ -142,7 +153,7 @@ extern std::vector<Drawbridge> bridges;
 extern std::vector<Ferry> ferries;
 extern int leafCount;
 struct ThemeCol { uint32_t off, offA, offB, shore, road, railA, railB; };
-static const ThemeCol THEMES[12] = {
+static const ThemeCol THEMES[17] = {
     { RGB(60, 148, 52),   RGB(92, 180, 68),   RGB(44, 124, 44),   RGB(224, 208, 136), RGB(112, 112, 120), RGB(214, 40, 40),   RGB(236, 236, 236) },  // summer forest
     { RGB(112, 188, 76),  RGB(156, 220, 100), RGB(88, 164, 68),   RGB(232, 216, 150), RGB(116, 116, 124), RGB(214, 40, 40),   RGB(236, 236, 236) },  // spring
     { RGB(150, 128, 52),  RGB(196, 116, 40),  RGB(120, 100, 44),  RGB(214, 196, 130), RGB(108, 108, 116), RGB(214, 40, 40),   RGB(236, 236, 236) },  // autumn
@@ -154,15 +165,38 @@ static const ThemeCol THEMES[12] = {
     { RGB(52, 152, 64),   RGB(64, 168, 76),   RGB(44, 136, 56),   RGB(224, 208, 136), RGB(78, 78, 86),    RGB(190, 196, 204), RGB(230, 60, 60) },    // F1 circuit
     { RGB(118, 130, 104), RGB(140, 150, 122), RGB(98, 108, 90),   RGB(160, 156, 146), RGB(108, 108, 112), RGB(232, 232, 232), RGB(120, 120, 120) },  // mountain
     { RGB(48, 128, 56),   RGB(72, 152, 68),   RGB(36, 104, 48),   RGB(210, 196, 130), RGB(104, 104, 112), RGB(214, 40, 40),   RGB(236, 236, 236) },  // Germany
-    { RGB(86, 120, 56),   RGB(110, 144, 64),  RGB(66, 98, 48),    RGB(96, 104, 60),   RGB(112, 112, 120), RGB(120, 84, 48),   RGB(170, 130, 80) } }; // swamp
+    { RGB(86, 120, 56),   RGB(110, 144, 64),  RGB(66, 98, 48),    RGB(96, 104, 60),   RGB(112, 112, 120), RGB(120, 84, 48),   RGB(170, 130, 80) },   // swamp
+    { RGB(14, 16, 36),    RGB(30, 40, 84),    RGB(8, 10, 24),     RGB(0, 150, 180),   RGB(62, 68, 92),    RGB(0, 232, 255),   RGB(24, 60, 130) },    // sci-fi
+    { RGB(26, 92, 184),   RGB(38, 110, 202),  RGB(20, 78, 166),   RGB(238, 222, 160), RGB(50, 136, 214),  RGB(236, 50, 40),   RGB(250, 250, 250) },  // water
+    { RGB(250, 178, 208), RGB(255, 214, 232), RGB(238, 148, 188), RGB(255, 240, 214), RGB(112, 66, 40),   RGB(232, 40, 56),   RGB(252, 252, 252) },  // candy
+    { RGB(54, 56, 54),    RGB(68, 72, 64),    RGB(42, 44, 46),    RGB(84, 34, 36),    RGB(66, 62, 72),    RGB(206, 202, 184), RGB(60, 56, 64) },     // horror
+    { RGB(22, 122, 72),   RGB(28, 134, 80),   RGB(18, 108, 64),   RGB(224, 208, 136), RGB(34, 146, 90),   RGB(250, 250, 250), RGB(40, 90, 200) } };  // sport
 static inline bool sandy() { return theme == TH_MEXICO; }
 static inline uint32_t waterCol(int k) {   // 0 deep, 1 light, 2 glint
     static const uint32_t w[3][3] = { { RGB(36, 96, 200), RGB(72, 140, 232), RGB(200, 230, 255) }, { RGB(50, 84, 58), RGB(66, 106, 66), RGB(132, 164, 110) }, { RGB(40, 84, 160), RGB(80, 130, 200), RGB(220, 236, 255) } };
-    return w[theme == TH_SWAMP ? 1 : (theme == TH_WINTER ? 2 : 0)][k];
+    if (liquid <= LQ_COLD) return w[theme == TH_SWAMP ? 1 : (theme == TH_WINTER ? 2 : 0)][k];
+    static const uint32_t n[5][3] = { { RGB(96, 54, 30), RGB(134, 82, 46), RGB(196, 146, 100) },     // chocolate
+                                      { RGB(124, 12, 18), RGB(168, 26, 30), RGB(236, 96, 84) },      // blood
+                                      { RGB(44, 136, 30), RGB(78, 184, 40), RGB(176, 255, 120) },    // slime
+                                      { RGB(8, 7, 12), RGB(26, 22, 30), RGB(8, 7, 12) },             // pit
+                                      { RGB(5, 5, 16), RGB(5, 5, 16), RGB(5, 5, 16) } };             // outer space
+    return n[liquid - LQ_CHOC][k];
 }
 uint32_t hue(int v);
 
 // ------------------------------------------------------------------ ground art
+// helpers for painting scenery into the ground picture (level.cpp)
+void gpx(int x, int y, uint32_t c);                         // one ground pixel
+void opx(int x, int y, uint32_t c, float h);                // one pixel above the cars, at height h
+void markSolid(int x, int y, int w, int h, uint8_t s, float cast);   // s: 1 low wall, 2 high wall; cast: shadow height
+void markObj(int x, int y, int w, int h);
+void markReserved(int x, int y, int w, int h);
+void sprite(int x, int y, const char* const* rows, int h, const char* keys, const uint32_t* cols, float tall = -1);
+bool placeFree(int x, int y, int rx, int ry = -1);
+void addLight(int x, int y, int r, int amt);                // a light source for night tracks
+void drawCanopy(int x, int y, int r, int kind);
+void addLeafTree(int x, int y, Rng& rng, int kind);
+void drawPalm(int x, int y);
 static inline bool onFerry(const Ferry& f, float x, float y) {
     float al = (x - f.x) * f.dx + (y - f.y) * f.dy, ac = -(x - f.x) * f.dy + (y - f.y) * f.dx;
     return fabsf(al) <= f.hl + 3 && fabsf(ac) <= f.hw;
@@ -193,6 +227,7 @@ struct Car {
     bool pUp = false, pDown = false;
     bool pAcc = false, startHit = false, startMissed = false, startDone = false;   // turbo start (see stepCar)
     float startMsg = 0;
+    float fall = 0;         // falling into a pit: 1 at the edge, shrinking towards 0
 };
 struct Proj { int type; float x, y, vx, vy, z, life; int owner; };
 struct Mine { float x, y, z, arm; int owner; };
@@ -213,6 +248,42 @@ void computeRanks();
 
 // ------------------------------------------------------------------ moving parts of a track
 void updateMechanics(float dt, float t);
+
+// ------------------------------------------------------------------ the worlds of tracks 31-50 (worlds.cpp)
+struct Critter { float x, y, hx, hy, ph, dead, dx, dy; int kind; int on = -1; float hold = 0; };     // kind: 0 zombie, 1 spider, 2 gummi bear, 3 hurdle; on: the car a zombie clings to
+struct Roller { float ax, ay, bx, by, speed, u, x, y, vx, vy, r, cd, wait; int dir; bool oneWay; };
+struct Bumper { float x, y, r, flash; };
+struct Pad { float x, y, r, squash; };
+struct Whirl { float x, y, r; };
+struct Warp { float ax, ay, bx, by, aa, ab, hw; int kA, kB; float flash; };
+extern std::vector<Critter> critters;
+extern std::vector<Roller> rollers;
+extern std::vector<Bumper> bumpers;
+extern std::vector<Pad> pads;
+extern std::vector<Whirl> whirls;
+extern std::vector<Warp> warps;
+extern std::vector<int> seaPix, boostPix;
+extern std::vector<uint8_t> boostVal;
+extern float flashT;                                        // lightning
+uint32_t worldOff(int x, int y, uint32_t hs);               // ground colour away from the road
+bool worldRoad(int ly, int p, uint32_t& out);               // road colour, false = use the standard one
+void worldVerge(int p, int d, uint32_t hs);                 // the strip of ground beside the road
+bool worldScenery(int x, int y, Rng& rng);                  // one piece of automatic scenery
+bool worldHouse(int x, int y, Rng& rng);                    // O_HOUSE in the new worlds
+bool worldObject(const Obj& o, Rng& rng);                   // other objects that look different there (false: the standard one)
+void worldDetails(Rng& rng);                                // small ground details, islands, table markings
+void worldClear();
+void worldBuildEarly();                                     // nets and warp gates (before the ground is painted)
+void worldBuild(Rng& rng);                                  // everything else (after the scenery)
+void worldBuildLate();                                      // shadows of standing things (after the ground is finished)
+void worldUpdate(float dt);                                 // critters, rollers... (120 Hz)
+void worldCar(Car& c, float dt);                            // what they do to a car (called from stepCar)
+void worldAmbient(float dt);                                // per frame: spiders, ghosts, lightning
+void worldDrawLow(int stage);                               // 0: moving ground (sea, turbo pads), 1: things below the cars
+void worldDrawHigh();                                       // drawn above the cars
+void killCar(Car& c, float t);
+void hitCar(Car& c, float spinT, float slow, float pop);
+void burst(float x, float y, int n, float sp, float life, const uint32_t* cols, int nc, float grav = 0);
 
 // ------------------------------------------------------------------ drawing
 void drawIcon(int x, int y, int w, bool tile = false);

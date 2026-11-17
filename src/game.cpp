@@ -136,6 +136,7 @@ static void simulate(float dt) {
     }
     collideCars();
     stepWeapons(dt);
+    if (newWorld()) worldUpdate(dt);
 }
 
 void updateRace(float frameDt) {

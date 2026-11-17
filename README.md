@@ -3,7 +3,7 @@ Rally Mayhem
 
 A tiny top-down racing game with 1-5 local players, inspired by Grand Prix Simulator on the Amstrad CPC and Rally Cross Challenge on the Amiga.
 
-Every track fits on a single 320x240 screen. There are 30 tracks with many themes such as summer, spring, city, village and many more. CPU cars fill the grid, collisions are pixel-exact, and bonus items can be fired ahead or behind. Steer with the D-pad, accelerate with A, brake with B, and press Y to put a stuck car back on the track.
+Every track fits on a single 320x240 screen. There are 50 tracks with many themes such as summer, spring, city, village and many more. CPU cars fill the grid, collisions are pixel-exact, and bonus items can be fired ahead or behind. Steer with the D-pad, accelerate with A, brake with B, and press Y to put a stuck car back on the track.
 
 ![Title screen](screenshots/title.png)
 ![In-game](screenshots/ingame.png)
@@ -91,7 +91,7 @@ Controls
 
 On the title screen press accelerate to join (brake leaves) and pick the track set, laps, CPU cars (ALL fills every free slot, or pick a number, or OFF), the CPU level (easy, normal, hard) and bonus items (on by default) with up/down/left/right. With bonus items on, each pick-up tile shows the weapon it holds. Press accelerate just as the start light turns green for a turbo start. While paused, brake quits the race. On desktop, F11 toggles fullscreen. On the PS Vita the buttons are Cross (accelerate), Circle (brake) and Triangle (reset); on the Switch, + or - pauses.
 
-The 30 tracks are played in sets of five: track set 1 is tracks 1-5, track set 2 is tracks 6-10, and so on, and "complete" plays all 30 in sequence. Each race awards points (10, 6, 4, 2, 1) and is followed by the next track; after the last track of the set the cup winner is shown, and the title screen comes back with the next track set selected.
+The 50 tracks are played in sets of five: track set 1 is tracks 1-5, track set 2 is tracks 6-10, and so on, and "complete" plays all 50 in sequence. Each race awards points (10, 6, 4, 2, 1) and is followed by the next track; after the last track of the set the cup winner is shown, and the title screen comes back with the next track set selected.
 
 Source files
 ------------
@@ -105,13 +105,14 @@ Source files
 | `src/draw.cpp` | drawing the track, cars, weather and lighting |
 | `src/gfx.cpp` | frame buffer helpers and text |
 | `src/synth.cpp` | sound synthesizer |
-| `src/tracks.cpp` | the 30 tracks |
+| `src/worlds.cpp` | the worlds of tracks 31-50: their ground art, scenery, creatures and machines |
+| `src/tracks.cpp` | the 50 tracks |
 | `src/game.h`, `src/tracks.h`, `src/synth.h` | shared declarations, the track format, the sound interface |
 
 Adding tracks
 -------------
 
-Tracks are in `src/tracks.cpp`: a closed spline of control points `{x, y, width, height, flags}`, a theme, the weather and a list of scenery objects. Cars are 9x5 pixels and a normal road is about 24 wide. The flags and object types are described in `src/tracks.h`; trees, houses and other scenery that suit the theme are scattered automatically.
+Tracks are in `src/tracks.cpp`: a closed spline of control points `{x, y, width, height, flags}`, a theme, the weather and a list of scenery objects. Keep the number of tracks a multiple of five, because they are played in sets of five. Cars are 9x5 pixels and a normal road is about 24 wide. The flags and object types are described in `src/tracks.h`; trees, houses and other scenery that suit the theme are scattered automatically.
 
 Credits
 -------

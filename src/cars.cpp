@@ -8,7 +8,7 @@ std::vector<Particle> parts;
 void addPart(float x, float y, float vx, float vy, float life, uint32_t col, float grav) {
     if (parts.size() < 700) parts.push_back({ x, y, vx, vy, life, life, col, grav });
 }
-static void burst(float x, float y, int n, float sp, float life, const uint32_t* cols, int nc, float grav = 0) {
+void burst(float x, float y, int n, float sp, float life, const uint32_t* cols, int nc, float grav) {
     for (int i = 0; i < n; i++) { float a = grng.f() * 2 * PI, s = sp * (0.3f + grng.f()); addPart(x, y, cosf(a) * s, sinf(a) * s, life * (0.5f + grng.f() * 0.7f), cols[grng.range(nc)], grav); }
 }
 static const uint32_t FIRE_COLS[4] = { RGB(255, 255, 0), RGB(255, 128, 0), RGB(255, 0, 0), RGB(255, 255, 255) };
@@ -38,6 +38,7 @@ static inline bool blockedPix(int x, int y, float z) {
     int p = y * W + x, ly = activeLayer(p, z);
     uint8_t s = solid[ly][p];
     if (s == 2 || (dynSolid[p] && ly == 0 && z < 4)) return true;
+    if (netMask[p] && ly == 0 && z - ht[0][p] < 2.2f) return true;       // a net: only cars in the air get across
     float h = ht[ly][p];
     if (s == 1 && z < h + 3.0f) return true;
     return h - z > 3.3f;
@@ -66,18 +67,18 @@ static void respawn(Car& c) {
     int k = ((c.idx - (int)(28 / spacing)) % NS + NS) % NS;
     for (int tries = 0; tries < NS; tries += 8, k = (k - 8 + NS) % NS) {
         const Sample& s = sm[k];
-        bool bad = (s.f & (fG | fF | fY)) || s.ramp > 0 || (s.over && s.type == S_ICE);
+        bool bad = (s.f & (fG | fF | fY | fHOP)) || s.ramp > 0 || (s.over && s.type == S_ICE);
         { int q = pixAt(s.x, s.y); if (spanMask[q] || ttMask[q]) bad = true; }
         for (const Crossing& cr : crossings) if (abs(cr.k - k) < (int)(14 / spacing)) bad = true;
-        for (int j = 4; j <= 84 && !bad; j += 4) if (sm[(k + (int)(j / spacing)) % NS].f & fG) bad = true;
+        for (int j = 4; j <= 84 && !bad; j += 4) if (sm[(k + (int)(j / spacing)) % NS].f & (fG | fHOP)) bad = true;
         if (!bad) break;
     }
     const Sample& s = sm[k];
     c.x = s.x; c.y = s.y; c.a = atan2f(s.ty, s.tx); c.vx = c.vy = c.vz = 0; c.z = s.h; c.gvis = s.h; c.air = false;
     c.spin = 0; c.invuln = 2.0f; c.idx = k; c.stuck = 0; c.lostT = 0; c.turbo = 0; c.slopeVz = 0;
 }
-static void killCar(Car& c, float t) { if (c.dead > 0) return; c.dead = t; c.vx = c.vy = 0; c.turbo = 0; }
-static void hitCar(Car& c, float spinT, float slow, float pop) {
+void killCar(Car& c, float t) { if (c.dead > 0) return; c.dead = t; c.vx = c.vy = 0; c.turbo = 0; }
+void hitCar(Car& c, float spinT, float slow, float pop) {
     if (c.invuln > 0 || c.dead > 0) return;
     c.spin = std::max(c.spin, spinT); c.vx *= slow; c.vy *= slow;
     if (pop > 0 && !c.air) { c.air = true; c.vz = pop; }
@@ -149,22 +150,31 @@ Input aiInput(Car& c, float dt) {
     int k = (c.idx + (int)(look / spacing)) % NS;
     const Sample& T = sm[k];
     float lane = c.lane * T.w * 0.22f;
-    bool rampAhead = false, gapAhead = false; float maxCurv = 0;
+    bool rampAhead = false, gapAhead = false, pit = false; float maxCurv = 0;
     for (int j = 0; j < 9; j++) {
         const Sample& s = sm[(c.idx + (int)(j * 8 / spacing)) % NS];
         if (s.ramp > 0) rampAhead = true;
-        if (s.f & fG) gapAhead = true;
+        if (s.f & (fG | fHOP)) gapAhead = true;
         if (j >= 1 && j <= 6) maxCurv = std::max(maxCurv, fabsf(s.curv));
         if (s.over || (s.f & (fB | fT | fY)) || s.w < 20) lane = 0;
+        if (newWorld() && s.over && !s.rail && j <= 4) pit = true;
     }
     if (rampAhead || gapAhead) lane = 0;
+    for (const Bumper& b : bumpers) {       // steer around bumpers
+        float al = (b.x - c.x) * cosf(c.a) + (b.y - c.y) * sinf(c.a);
+        if (al < -2 || al > 46) continue;
+        float lb = -(b.x - T.x) * T.ty + (b.y - T.y) * T.tx;        // where it stands across the road
+        if (fabsf(lb - lane) < b.r + 9) lane = lb > 0 ? lb - (b.r + 10) : lb + (b.r + 10);
+    }
     float tx = T.x - T.ty * lane, ty = T.y + T.tx * lane;
     float want = atan2f(ty - c.y, tx - c.x), d = angDiff(want, c.a);
     if (d > 0.04f) in.r = true; else if (d < -0.04f) in.l = true;
     static const float corner[3] = { 13.0f, 13.3f, 13.7f };     // easy, normal, hard: how fast CPU cars dare to take a bend
-    float vSafe = corner[optDiff] * c.skill / sqrtf(maxCurv + 0.0025f);
+    static const float handling[3] = { 1.0f, 0.86f, 0.80f };     // hovercraft and boats slide more: slower into the bends
+    float vSafe = corner[optDiff] * handling[vehicle] * c.skill / sqrtf(maxCurv + 0.0025f);
     if (sf == S_ICE || sm[k].type == S_ICE) vSafe *= 0.6f;
     if (weather != WX_CLEAR) vSafe *= 0.88f;
+    if (pit) vSafe *= 0.84f;                                  // no railing and a long way down: careful
     if (c.finished) vSafe = std::min(vSafe, 55.0f);
     if (rampAhead || gapAhead) vSafe = 999;
     c.power = (rampAhead || gapAhead) ? 1.0f : c.skill;   // CPU cars are down on power, except on the run-up to a jump
@@ -241,7 +251,7 @@ Input aiInput(Car& c, float dt) {
 }
 
 void stepCar(Car& c, Input in, float dt) {
-    if (c.dead > 0) { c.dead -= dt; if (c.dead <= 0) respawn(c); return; }
+    if (c.dead > 0) { c.dead -= dt; if (c.fall > 0) c.fall -= dt * 1.1f; if (c.dead <= 0) { c.fall = 0; respawn(c); } return; }
     if (c.invuln > 0) c.invuln -= dt;
     if (c.crashCd > 0) c.crashCd -= dt;
     // Turbo start: pressing the gas just as the light turns green (a little early or late still counts)
@@ -264,6 +274,7 @@ void stepCar(Car& c, Input in, float dt) {
     if (c.startMsg > 0) c.startMsg -= dt;
     if (raceT < 0) { in.acc = in.brk = in.l = in.r = in.up = in.down = false; }
     if (in.reset && c.human && raceT > 0) { killCar(c, 0.8f); return; }
+    if (newWorld()) worldCar(c, dt);       // bumpers, trampolines, whirlpools, warp gates
     int p = pixAt(c.x, c.y), ly = activeLayer(p, c.z);
     uint8_t s = surf[ly][p];
     const Ferry* fer = nullptr;
@@ -286,11 +297,18 @@ void stepCar(Car& c, Input in, float dt) {
         case S_PUDDLE: drag = 1.7f; grip = 1.6f; break;
         case S_WATER: drag = 6; break;
         case S_METAL: grip = 5; break;
+        case S_SLIME: drag = 3.3f; grip = 5; break;
         default: break;
         }
-        if (weather == WX_RAIN && (s == S_ROAD || s == S_PLANK || s == S_BOOST)) grip *= 0.6f;
+        if (raining() && (s == S_ROAD || s == S_PLANK || s == S_BOOST)) grip *= 0.6f;
         if (weather == WX_SNOW && s != S_ICE) grip *= 0.7f;
         if (fabsf(sm[idxm[ly][p]].bank) > 0.05f && roadLike(s)) grip *= 1.5f;
+        float steer = 3.7f, steerV = 22;
+        if (vehicle == VH_HOVER) { grip *= 0.55f; if (s == S_OFF) drag = 3.2f; }                    // floats: slides through the bends
+        if (vehicle == VH_BOAT) {                                                                  // no grip to speak of, turns only when moving
+            acc *= 0.94f; grip *= 0.36f; steer = 3.2f; steerV = 34;
+            if (s == S_OFF) { drag = 2.6f; grip = 2.6f; } else if (s == S_ROAD) drag = 1.3f;
+        }
         if (c.turbo > 0) {
             acc *= 1.7f; c.turbo -= dt;
             if (frameNo & 1) addPart(c.x - fx * 4, c.y - fy * 4 - (c.z - c.gvis), -fx * 30 + (grng.f() - 0.5f) * 20, -fy * 30 + (grng.f() - 0.5f) * 20, 0.25f, FIRE_COLS[grng.range(3)]);
@@ -299,7 +317,7 @@ void stepCar(Car& c, Input in, float dt) {
             if (in.acc) vf += acc * c.power * dt;
             if (in.brk) { if (vf > 2) vf -= 260 * dt; else vf -= acc * 0.5f * dt; }
             float st = (in.r ? 1.f : 0.f) - (in.l ? 1.f : 0.f);
-            newA += st * 3.7f * clampf(fabsf(vf) / 22, 0, 1) * (vf < 0 ? -1 : 1) * dt;
+            newA += st * steer * clampf(fabsf(vf) / steerV, 0, 1) * (vf < 0 ? -1 : 1) * dt;
         } else drag += 2;
         vf -= vf * drag * dt;
         if (vf < -38) vf = -38;
@@ -322,18 +340,18 @@ void stepCar(Car& c, Input in, float dt) {
         // skid marks and dust
         float sp = hypotf(c.vx, c.vy);
         bool skid = fabsf(lat0) > 26 || (!ctl && sp > 20) || (in.brk && vf > 40);
-        if (skid && ly == 0 && (s == S_ROAD || s == S_BOOST || s == S_PLANK)) {
+        if (skid && ly == 0 && (s == S_ROAD || s == S_BOOST || s == S_PLANK) && vehicle == VH_CAR) {
             for (int side = -1; side <= 1; side += 2) {
                 int q = pixAt(c.x - fx * 3.2f - fy * 2.0f * side, c.y - fy * 3.2f + fx * 2.0f * side);
                 if (surf[0][q] == s && ((ground[q] >> 8) & 255) > 56) ground[q] = shade(ground[q], 0.8f);
             }
             if (c.human) { snd::skidTarget = std::max(snd::skidTarget, 0.12f); snd::skidPan = snd::panOf(c.x); }
         }
-        if (sp > 30 && (frameNo % 3) == 0) {
+        if (sp > 30 && (frameNo % 3) == 0 && vehicle == VH_CAR) {
             if (s == S_DIRT || (s == S_OFF && sandy())) addPart(c.x - fx * 4, c.y - fy * 4, (grng.f() - 0.5f) * 20, (grng.f() - 0.5f) * 20 - 5, 0.5f, grng.range(2) ? RGB(255, 160, 64) : RGB(192, 96, 0));
             else if (s == S_OFF && theme == TH_WINTER) addPart(c.x - fx * 4, c.y - fy * 4, (grng.f() - 0.5f) * 20, (grng.f() - 0.5f) * 20 - 5, 0.4f, C_WHITE);
             else if (s == S_OFF && (frameNo % 6) == 0) addPart(c.x - fx * 4, c.y - fy * 4, (grng.f() - 0.5f) * 14, (grng.f() - 0.5f) * 14, 0.35f, THEMES[theme].offA);
-            else if (s == S_SHALLOW || s == S_PUDDLE || (weather == WX_RAIN && roadLike(s) && (frameNo % 6) == 0)) addPart(c.x - fx * 4, c.y - fy * 4, (grng.f() - 0.5f) * 30, -10 - grng.f() * 20, 0.35f, WATER_COLS[grng.range(3)], 80);
+            else if (s == S_SHALLOW || s == S_PUDDLE || (raining() && roadLike(s) && (frameNo % 6) == 0)) addPart(c.x - fx * 4, c.y - fy * 4, (grng.f() - 0.5f) * 30, -10 - grng.f() * 20, 0.35f, WATER_COLS[grng.range(3)], 80);
         }
     }
     // rotate (pixel exact against walls)
@@ -387,10 +405,11 @@ void stepCar(Car& c, Input in, float dt) {
             c.gvis = c.z;
         }
     } else {
-        c.vz -= 250 * dt; c.z += c.vz * dt;
+        c.vz -= (vehicle == VH_HOVER ? 205 : 250) * dt; c.z += c.vz * dt;
         if (c.z <= hg) {
             c.z = hg; c.air = false; c.slopeVz = 0;
-            if (c.vz < -30) { snd::land(c.x); if (surf[ly][p] != S_WATER) burst(c.x, c.y, 6, 20, 0.3f, SMOKE_COLS, 2); }
+            if (c.vz < -30 && vehicle == VH_BOAT) { snd::splash(c.x); burst(c.x, c.y, 14, 34, 0.4f, WATER_COLS, 3, 60); }
+            else if (c.vz < -30) { snd::land(c.x); if (surf[ly][p] != S_WATER) burst(c.x, c.y, 6, 20, 0.3f, SMOKE_COLS, 2); }
         }
         c.gvis += (hg - c.gvis) * std::min(1.0f, dt * 9); if (c.gvis > c.z) c.gvis = c.z;
         slope = clampf(c.vz / std::max(sp, 30.0f), -0.6f, 0.6f);
@@ -408,7 +427,11 @@ void stepCar(Car& c, Input in, float dt) {
     bool realRoad = roadLike(s);
     for (const Ferry& f : ferries) if (!c.air && onFerry(f, c.x, c.y) && (s == S_WATER || s == S_OFF)) s = S_PLANK;
     if (!c.air && ly == 0 && spanMask[p] && bridges[spanMask[p] - 1].lift > 0.3f) s = S_WATER;      // the drawbridge opened under the car
-    if (!c.air && s == S_WATER) { burst(c.x, c.y, 26, 45, 0.6f, WATER_COLS, 3, 60); snd::splash(c.x); killCar(c, 1.4f); return; }
+    if (!c.air && s == S_WATER && bottomless()) { c.fall = 1; snd::fallAway(c.x); killCar(c, 1.3f); return; }      // down the pit
+    if (!c.air && s == S_WATER) {
+        static const uint32_t CHOC[3] = { RGB(134, 82, 46), RGB(96, 54, 30), RGB(196, 146, 100) }, RED[3] = { RGB(200, 16, 24), RGB(140, 8, 16), RGB(240, 60, 50) }, GRN[3] = { RGB(120, 230, 60), RGB(60, 160, 40), RGB(190, 255, 120) };
+        burst(c.x, c.y, 26, 45, 0.6f, liquid == LQ_CHOC ? CHOC : (liquid == LQ_BLOOD ? RED : (liquid == LQ_SLIME ? GRN : WATER_COLS)), 3, 60); snd::splash(c.x); killCar(c, 1.4f); return;
+    }
     if (c.invuln <= 0 && trainHits(c)) { explosion(c.x, c.y); killCar(c, 1.6f); return; }
     // progress
     if (roadLike(s) || c.air) {
