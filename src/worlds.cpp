@@ -21,6 +21,8 @@ struct Dangler { float x, top, len, ph; };           // a spider on its thread
 struct Ghost { float x, y, ph; };
 struct Arch { float cx, cy, R, r; };                // a donut standing across the road
 static std::vector<Arch> arches;
+static std::vector<int> starPix;                     // stars and floor lights of the sci-fi world: they twinkle
+static float shootX = -100, shootY = 0, shootT = 3;  // a shooting star
 static std::vector<Fin> fins;
 static std::vector<Blink> blinks;
 static std::vector<Dangler> danglers;
@@ -42,7 +44,7 @@ static inline uint32_t mixc(uint32_t a, uint32_t b, float t) {
 
 void worldClear() {
     critters.clear(); rollers.clear(); bumpers.clear(); pads.clear(); whirls.clear(); warps.clear();
-    seaPix.clear(); boostPix.clear(); boostVal.clear(); fins.clear(); blinks.clear(); danglers.clear(); arches.clear();
+    seaPix.clear(); boostPix.clear(); boostVal.clear(); fins.clear(); blinks.clear(); danglers.clear(); arches.clear(); starPix.clear(); shootX = -100;
     stains = 0; flashT = 0; nextFlash = 5;
 }
 
@@ -652,12 +654,11 @@ void worldDetails(Rng& rng) {
         markSolid(0, HUD_H, W, 7, 2, 4); markSolid(0, H - 7, W, 7, 2, 4); markSolid(0, HUD_H, 7, H - HUD_H, 2, 4); markSolid(W - 7, HUD_H, 7, H - HUD_H, 2, 4);
     }
     if (theme == TH_SPORT && style == 0) {      // a cue and a cube of chalk lie on the cloth
-        for (int k = 0; k < 96; k++) {
-            int x = 96 + k, y = 172 - k / 6;
-            uint32_t c = k < 3 ? RGB(120, 200, 240) : (k < 6 ? C_WHITE : (k < 60 ? RGB(226, 190, 130) : (k % 6 == 0 ? RGB(230, 230, 230) : RGB(70, 40, 30))));
-            if (!freeOff(x, y) || distRoad[y * W + x] < 3) continue;
-            gpx(x, y, c); if (k > 40 && freeOff(x, y + 1)) gpx(x, y + 1, shade(c, 0.7f));
-            objMask[y * W + x] = 1; castH[y * W + x] = 1.2f;
+        for (int k = 0; k < 86; k++) {       // it lies clear of the track, in one piece
+            int x = 62 + k, y = 151 - k / 6;
+            uint32_t c = k < 3 ? RGB(120, 200, 240) : (k < 6 ? C_WHITE : (k < 54 ? RGB(226, 190, 130) : (k % 6 == 0 ? RGB(230, 230, 230) : RGB(70, 40, 30))));
+            gpx(x, y, c); if (k > 36) gpx(x, y + 1, shade(c, 0.7f));
+            objMask[y * W + x] = 1; objMask[(y + 1) * W + x] = 1; castH[y * W + x] = 1.2f; reserved[y * W + x] = 1;
         }
         for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) if (freeOff(120 + i, 96 + j)) { gpx(120 + i, 96 + j, (i == 3 || j == 3) ? RGB(20, 70, 140) : ((i == 1 && j == 1) ? RGB(60, 110, 180) : RGB(40, 110, 200))); objMask[(96 + j) * W + 120 + i] = 1; castH[(96 + j) * W + 120 + i] = 2; }
     }
@@ -798,6 +799,13 @@ static void buildDonut(float cx, float cy, float R, float r, Rng& rng) {
 // the shadow of an arch falls on the ground to its lower right
 void worldBuildLate() {
     static uint8_t done[N];
+    if (theme == TH_SCIFI) for (int p = (HUD_H + 1) * W; p < N - W; p++) {       // collect the stars
+        if (objMask[p] || solid[0][p] || surf[1][p] != S_NONE || overA[p] || shadowM[p]) continue;
+        uint32_t c = ground[p];
+        bool star = surf[0][p] == S_WATER ? (c == C_WHITE || c == RGB(120, 130, 190) || c == RGB(255, 220, 150))
+                                          : (surf[0][p] == S_OFF && style != 2 && (c == THEMES[TH_SCIFI].offA || c == RGB(40, 48, 60) || c == RGB(80, 34, 24)));
+        if (star) starPix.push_back(p);
+    }
     if (arches.empty()) return;
     memset(done, 0, sizeof(done));
     for (const Arch& a : arches)
@@ -1045,6 +1053,11 @@ void worldAmbient(float dt) {
         nextFlash -= dt;
         if (nextFlash <= 0) { nextFlash = 4 + grng.f() * 7; flashT = 0.32f; if (!attract) snd::thunder(); }
     }
+    if (theme == TH_SCIFI && liquid == LQ_SPACE && flood) {      // now and then a shooting star crosses the sky
+        shootT -= dt;
+        if (shootT <= 0) { shootT = 2.5f + grng.f() * 5; shootX = 20 + grng.f() * (W - 60); shootY = HUD_H + 2 + grng.f() * 60; }
+        if (shootX > -50) { shootX += 150 * dt; shootY += 95 * dt; if (shootX > W + 20 || shootY > H + 10) shootX = -100; }
+    }
     for (Dangler& d : danglers) d.ph += dt * 0.5f;
     for (Ghost& g : ghosts) g.ph += dt;
     // hovercraft and boats leave a trail
@@ -1085,6 +1098,24 @@ void worldDrawLow(int stage) {
             if ((row & 3) == 0 && ph < 5) fb[p] = shade(fb[p], ph == 2 ? 1.34f : 1.16f);
             else if ((row & 3) == 2 && ((x * 2 - t + row * 7) % 37 + 37) % 37 < 3) fb[p] = shade(fb[p], 0.86f);
         }
+    }
+    // stars twinkle; the bright ones flare into a little cross now and then
+    for (int p : starPix) {
+        uint32_t h = hash2(p % W, p / W, 31), base = ground[p];
+        int ph = (int)((frameNo * (2 + (h & 3)) + (h >> 4)) & 255), tri = ph < 128 ? ph : 255 - ph;       // 0..127..0
+        bool space = surf[0][p] == S_WATER;
+        fb[p] = space ? mixc(shade(base, 0.35f), (h & 64) ? RGB(190, 230, 255) : C_WHITE, tri / 127.0f) : mixc(base, (h & 64) ? RGB(0, 232, 255) : RGB(255, 80, 220), tri / 160.0f);
+        if ((h % 5) == 0 && tri > 104) {
+            static const int nb[4] = { -1, 1, -W, W };
+            uint32_t glow = space ? RGB(150, 190, 255) : shade(fb[p], 0.7f);
+            for (int q = 0; q < 4; q++) { int pp = p + nb[q]; if (surf[0][pp] == surf[0][p] && !objMask[pp] && !solid[0][pp] && surf[1][pp] == S_NONE && !overA[pp]) fb[pp] = mixc(fb[pp], glow, (tri - 104) / 30.0f); }
+            if (tri > 120) fb[p] = C_WHITE;
+        }
+    }
+    if (shootX > -50) for (int k = 0; k < 14; k++) {
+        int q = pixAt(shootX - k * 1.5f, shootY - k * 0.95f);
+        if (shootX - k * 1.5f < 0 || shootX - k * 1.5f >= W || shootY - k * 0.95f < HUD_H || surf[0][q] != S_WATER || surf[1][q] != S_NONE || overA[q] || objMask[q]) continue;
+        fb[q] = mixc(fb[q], k < 2 ? C_WHITE : RGB(150, 200, 255), 1.0f - k / 14.0f);
     }
     // turbo pads: chevrons run forwards
     if (!boostPix.empty()) {

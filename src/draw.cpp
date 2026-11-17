@@ -8,6 +8,8 @@ static inline uint32_t mixc(uint32_t a, uint32_t b, float t) {
     int r = (int)(((a >> 16) & 255) * (1 - t) + ((b >> 16) & 255) * t), g = (int)(((a >> 8) & 255) * (1 - t) + ((b >> 8) & 255) * t), bl = (int)((a & 255) * (1 - t) + (b & 255) * t);
     return RGB(r, g, bl);
 }
+// an anti-gravity racer seen from above (nose to the right): e engine, w wing tip, b body, s spine, c canopy, n nose
+static const char* const hull[5] = { "eww......", "ebbbbw...", ".sbbccbbn", "ebbbbw...", "eww......" };
 static void drawCar(const Car& c) {
     if (c.dead > 0) {
         if (c.fall <= 0) return;
@@ -25,8 +27,18 @@ static void drawCar(const Car& c) {
     if (vehicle == VH_HOVER) zv += 3.0f + sinf(frameNo * 0.13f + c.slot * 1.7f) * 0.6f;       // hovercraft float a few pixels up
     // shadow (the pixel exact collision footprint, shifted)
     int m[96][2], n = carMask(c.x, c.y, c.a, m), so = 1 + (int)(zv * 0.6f);
-    if (vehicle == VH_HOVER) for (int i = 0; i < n; i++) { int q = pixAt((float)m[i][0], (float)m[i][1]); if (m[i][1] >= HUD_H && ((m[i][0] + m[i][1] + (frameNo >> 2)) & 1)) fb[q] = mixc(fb[q], RGB(60, 220, 255), 0.4f); }      // the anti-gravity field lights the ground
-    if (vehicle != VH_BOAT || zv > 1.5f) for (int i = 0; i < n; i++) pdark(m[i][0] + so, m[i][1] + 1 + (int)(zv * 0.2f), 0.55f);
+    if (vehicle == VH_HOVER) {
+        // the craft's own outline, twice: the anti-gravity field lighting the ground right below it, and its shadow
+        int sy = 1 + (int)(zv * 0.2f);
+        for (int py = (int)c.y - 7; py <= (int)c.y + 7; py++) for (int px = (int)c.x - 7; px <= (int)c.x + 7; px++) {
+            float wx = px + 0.5f - c.x, wy = py + 0.5f - c.y, lx = wx * cs + wy * sn, ly = -wx * sn + wy * cs;
+            int ix = (int)floorf(lx + CAR_HL), iy = (int)floorf(ly + CAR_HW);
+            if (ix < 0 || ix > 8 || iy < 0 || iy > 4 || hull[iy][ix] == '.' || py < HUD_H) continue;
+            if (inb(px, py) && ((px + py + (frameNo >> 2)) & 1)) fb[py * W + px] = mixc(fb[py * W + px], RGB(60, 220, 255), 0.4f);
+            if (py + sy >= HUD_H) pdark(px + so, py + sy, 0.55f);
+        }
+    }
+    if (vehicle == VH_CAR || (vehicle == VH_BOAT && zv > 1.5f)) for (int i = 0; i < n; i++) pdark(m[i][0] + so, m[i][1] + 1 + (int)(zv * 0.2f), 0.55f);
     int cx = (int)floorf(c.x), cy = (int)floorf(c.y - zv);
     for (int py = cy - 11; py <= cy + 8; py++) for (int px = cx - 8; px <= cx + 8; px++) {
         for (int L = 2; L >= 0; L--) {
@@ -40,7 +52,6 @@ static void drawCar(const Car& c) {
             if (vehicle != VH_CAR) {
                 if (vehicle == VH_HOVER) {
                     // an anti-gravity racer: a needle nose, swept wings, two engine pods at the back
-                    static const char* hull[5] = { "eww......", "ebbbbw...", ".sbbccbbn", "ebbbbw...", "eww......" };
                     char ch = hull[iy][ix];
                     if (ch == '.') continue;
                     bool flick = (frameNo + c.slot) & 2;
@@ -87,7 +98,7 @@ static void drawCar(const Car& c) {
     }
 }
 static bool carUnder(const Car& c) {
-    for (int j = -5; j <= 5; j += 5) for (int i = -5; i <= 5; i += 5) {
+    for (int j = -5; j <= 5; j++) for (int i = -5; i <= 5; i++) {       // every pixel: a candy cane or a lamp post is only one pixel wide
         int x = (int)c.x + i, y = (int)c.y + j;
         if (inb(x, y) && overA[y * W + x] && c.z < overH[y * W + x] - 3) return true;
     }
